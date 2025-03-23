@@ -1,6 +1,7 @@
 # Lora APRS Repeater
 
 Projekt **Lora APRS Repeater** bazuje na mikrokontrolerze **STM32L072xx** i wykorzystuje **dwa moduły RFM96W-433S2**.
+
 Celem jest nasłuchiwanie sygnałów APRS na częstotliwości **434.855.000 kHz** i retransmisja odebranych ramek na częstotliwości **433.775.000 kHz**.
 
 ---
@@ -66,10 +67,15 @@ W repozytorium znajdują (lub będą się znajdować) następujące katalogi:
 ## Planowane funkcjonalności
 
 Odbiór ramek APRS na 434.855.000 kHz z wykorzystaniem modułu RFM96W.
+
 Parsowanie i buforowanie odbieranych ramek w pamięci mikrokontrolera.
+
 Retransmisja ramek na 433.775.000 kHz za pomocą drugiego modułu RFM96W.
+
 Możliwa konfiguracja i diagnostyka przez interfejs szeregowy (UART) bądź interfejs USB (w zależności od wersji sprzętu).
+
 Tryb oszczędzania energii (low-power) w celu dłuższej pracy w terenie na zasilaniu akumulatorowym.
+
 Zasilanie solarne – obsługa ładowania akumulatora przez MPPT, monitorowanie stanu baterii.
 
 ---
@@ -77,11 +83,12 @@ Zasilanie solarne – obsługa ładowania akumulatora przez MPPT, monitorowanie 
 ## Status projektu
 
 Faza: Projektowanie płytki PCB.
+
 Kolejne kroki:
-    Zamówienie i montaż prototypu PCB.
-    Weryfikacja działania hardware’u.
-    Implementacja oprogramowania na STM32L072xx.
-    Testy laboratoryjne i terenowe retransmisji APRS.
+- Zamówienie i montaż prototypu PCB.
+- Weryfikacja działania hardware’u.
+- Implementacja oprogramowania na STM32L072xx.
+- Testy laboratoryjne i terenowe retransmisji APRS.
 
 ---
 
@@ -89,18 +96,22 @@ Kolejne kroki:
 
 Jeśli chcesz się zaangażować lub masz pytania:
 
- Zgłaszaj issues bezpośrednio w repozytorium (zgłaszanie błędów, pomysłów).
- Zapraszamy do pull requestów z poprawkami i usprawnieniami.
- Dodatkowy kontakt: waperr@interia.pl.
+Zgłaszaj issues bezpośrednio w repozytorium (zgłaszanie błędów, pomysłów).
+
+Zapraszamy do pull requestów z poprawkami i usprawnieniami.
+
+Dodatkowy kontakt: waperr@interia.pl.
 
 ---
 
 ## Licencja
 
 Projekt udostępniany jest na warunkach licencji MIT.
+
 Zapoznaj się z treścią pliku LICENSE w repozytorium, aby poznać szczegóły.
 
 ---
 
 Dziękuję za zainteresowanie projektem Lora APRS Repeater!
+
 Zachęcam do śledzenia postępów i aktywnego udziału w rozwoju projektu.
