@@ -65,23 +65,23 @@ W repozytorium znajdują (lub będą się znajdować) następujące katalogi:
 
 ## Planowane funkcjonalności
 
-    Odbiór ramek APRS na 434.855.000 kHz z wykorzystaniem modułu RFM96W.
-    Parsowanie i buforowanie odbieranych ramek w pamięci mikrokontrolera.
-    Retransmisja ramek na 433.775.000 kHz za pomocą drugiego modułu RFM96W.
-    Możliwa konfiguracja i diagnostyka przez interfejs szeregowy (UART) bądź interfejs USB (w zależności od wersji sprzętu).
-    Tryb oszczędzania energii (low-power) w celu dłuższej pracy w terenie na zasilaniu akumulatorowym.
-    Zasilanie solarne – obsługa ładowania akumulatora przez MPPT, monitorowanie stanu baterii.
+Odbiór ramek APRS na 434.855.000 kHz z wykorzystaniem modułu RFM96W.
+Parsowanie i buforowanie odbieranych ramek w pamięci mikrokontrolera.
+Retransmisja ramek na 433.775.000 kHz za pomocą drugiego modułu RFM96W.
+Możliwa konfiguracja i diagnostyka przez interfejs szeregowy (UART) bądź interfejs USB (w zależności od wersji sprzętu).
+Tryb oszczędzania energii (low-power) w celu dłuższej pracy w terenie na zasilaniu akumulatorowym.
+Zasilanie solarne – obsługa ładowania akumulatora przez MPPT, monitorowanie stanu baterii.
 
 ---
 
 ## Status projektu
 
-    Faza: Projektowanie płytki PCB.
-    Kolejne kroki:
-        Zamówienie i montaż prototypu PCB.
-        Weryfikacja działania hardware’u.
-        Implementacja oprogramowania na STM32L072xx.
-        Testy laboratoryjne i terenowe retransmisji APRS.
+Faza: Projektowanie płytki PCB.
+Kolejne kroki:
+    Zamówienie i montaż prototypu PCB.
+    Weryfikacja działania hardware’u.
+    Implementacja oprogramowania na STM32L072xx.
+    Testy laboratoryjne i terenowe retransmisji APRS.
 
 ---
 
