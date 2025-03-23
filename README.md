@@ -89,9 +89,9 @@ Kolejne kroki:
 
 Jeśli chcesz się zaangażować lub masz pytania:
 
-    Zgłaszaj issues bezpośrednio w repozytorium (zgłaszanie błędów, pomysłów).
-    Zapraszamy do pull requestów z poprawkami i usprawnieniami.
-    Dodatkowy kontakt: waperr@interia.pl.
+ Zgłaszaj issues bezpośrednio w repozytorium (zgłaszanie błędów, pomysłów).
+ Zapraszamy do pull requestów z poprawkami i usprawnieniami.
+ Dodatkowy kontakt: waperr@interia.pl.
 
 ---
 
