@@ -1,6 +1,6 @@
 # Lora APRS Repeater
 
-Projekt **Lora APRS Repeater** bazuje na mikrokontrolerze **STM32L072xx** i wykorzystuje **dwa moduły RFM96W-433S2**.  
+Projekt **Lora APRS Repeater** bazuje na mikrokontrolerze **STM32L072xx** i wykorzystuje **dwa moduły RFM96W-433S2**.
 Celem jest nasłuchiwanie sygnałów APRS na częstotliwości **434.855.000 kHz** i retransmisja odebranych ramek na częstotliwości **433.775.000 kHz**.
 
 ---
