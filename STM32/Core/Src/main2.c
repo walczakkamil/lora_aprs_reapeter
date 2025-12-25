@@ -92,14 +92,6 @@ static void RX_Reset(void)
   HAL_Delay(10);
 }
 
-static void RX2_Reset(void)
-{
-  HAL_GPIO_WritePin(RX2_RST_GPIO_Port, RX2_RST_Pin, GPIO_PIN_RESET);
-  HAL_Delay(2);
-  HAL_GPIO_WritePin(RX2_RST_GPIO_Port, RX2_RST_Pin, GPIO_PIN_SET);
-  HAL_Delay(10);
-}
-
 /* =========================
    SPI reg read/write
    ========================= */
@@ -115,28 +107,7 @@ static uint8_t RX_ReadReg(uint8_t addr)
   return rx[1];
 }
 
-static uint8_t RX2_ReadReg(uint8_t addr)
-{
-  uint8_t tx[2] = { (uint8_t)(addr & 0x7F), 0x00 };
-  uint8_t rx[2] = { 0, 0 };
-
-  RX2_NSS_LOW();
-  HAL_SPI_TransmitReceive(&hspi1, tx, rx, 2, 200);
-  RX2_NSS_HIGH();
-
-  return rx[1];
-}
-
 static void RX_WriteReg(uint8_t addr, uint8_t value)
-{
-  uint8_t tx[2] = { (uint8_t)(addr | 0x80), value };
-
-  RX_NSS_LOW();
-  HAL_SPI_Transmit(&hspi1, tx, 2, 200);
-  RX_NSS_HIGH();
-}
-
-static void RX2_WriteReg(uint8_t addr, uint8_t value)
 {
   uint8_t tx[2] = { (uint8_t)(addr | 0x80), value };
 
