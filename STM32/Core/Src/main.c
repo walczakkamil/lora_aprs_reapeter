@@ -153,6 +153,83 @@ UART_HandleTypeDef huart1;
 #endif
 #ifndef LED_Pin
 #define LED_Pin GPIO_PIN_13
+
+/* =============================================================================
+ * LED blink helper (non-blocking, low-power friendly)
+ * =============================================================================
+ * Motivation:
+ *  - Do NOT use HAL_GPIO_TogglePin() on RX/TX events, because it can leave the LED
+ *    ON for a long time (wasting power) depending on packet timing.
+ *
+ * Behavior:
+ *  - RX event  -> 1 short blink
+ *  - TX event  -> 2 short blinks
+ *
+ * Implementation:
+ *  - Non-blocking state machine driven by HAL_GetTick().
+ *  - Call LED_Task() regularly from the main loop.
+ * =============================================================================
+ */
+
+typedef struct
+{
+  uint8_t transitions_left;   /**< Remaining ON/OFF transitions (2 per blink). */
+  uint8_t phase;              /**< 0 = LED OFF, 1 = LED ON. */
+  uint32_t next_tick;         /**< Next tick to toggle LED phase. */
+} led_blink_t;
+
+static led_blink_t g_led = {0};
+
+#ifndef LED_ON_TIME_MS
+#define LED_ON_TIME_MS  40u
+#endif
+#ifndef LED_OFF_TIME_MS
+#define LED_OFF_TIME_MS 60u
+#endif
+
+#define LED_ON()   HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_RESET)
+#define LED_OFF()  HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_SET)
+
+
+/**
+ * @brief Schedule N LED blinks (non-blocking).
+ * @param count Number of blinks to perform (1=RX, 2=TX).
+ */
+static void LED_Blink(uint8_t count)
+{
+  if (count == 0) return;
+
+  /* Each blink consists of ON + OFF => 2 transitions. */
+  g_led.transitions_left = (uint8_t)(count * 2u);
+  g_led.phase = 0;
+  g_led.next_tick = HAL_GetTick();
+}
+
+/**
+ * @brief LED state machine task (call from the main loop).
+ */
+static void LED_Task(void)
+{
+  if (g_led.transitions_left == 0) return;
+
+  uint32_t now = HAL_GetTick();
+  if ((int32_t)(now - g_led.next_tick) < 0) return;
+
+  if (g_led.phase == 0)
+  {
+	LED_ON();
+    g_led.phase = 1;
+    g_led.next_tick = now + LED_ON_TIME_MS;
+  }
+  else
+  {
+	LED_OFF();
+    g_led.phase = 0;
+    g_led.transitions_left--;
+    g_led.next_tick = now + LED_OFF_TIME_MS;
+  }
+}
+
 #endif
 
 /* =========================
@@ -634,6 +711,9 @@ static void RADIO_TX_Send(uint8_t rid, const uint8_t *payload, uint8_t len)
     system_panic_reset("TX stuck");
   }
 
+  /* TX success indication: two short blinks */
+  LED_Blink(2);
+
   /* R2 wraca do STDBY (oszczędność energii) */
   RADIO_SetMode(rid, MODE_STDBY);
 }
@@ -748,7 +828,7 @@ static void RADIO_RX_ProcessIfAny(uint8_t rid)
     }
   }
 
-  HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
+  LED_Blink(1);
 }
 
 /** @brief EXTI flags set in HAL_GPIO_EXTI_Callback() and consumed in the main loop. */
@@ -810,6 +890,7 @@ int main(void)
   /* R2 stays in STDBY until TX */
   RADIO_SetMode(RID_RX2, MODE_STDBY);
 
+  LED_OFF();
 
   if (v1 == 0x00 || v1 == 0xFF)
   {
@@ -831,6 +912,9 @@ int main(void)
 
   while (1)
   {
+    /* Handle scheduled LED blinks (RX=1, TX=2) */
+    LED_Task();
+
     static uint32_t last_led = 0;
     if (HAL_GetTick() - last_led > 500)
     {
@@ -955,6 +1039,8 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   GPIO_InitStruct.Pin = LED_Pin;
   HAL_GPIO_Init(LED_GPIO_Port, &GPIO_InitStruct);
+  /* Default LED state: OFF (saves power) */
+  HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_RESET);
 
   // NVIC for EXTI lines (RX1 on PB1 -> EXTI1, RX2 on PB11 -> EXTI15_10)
   HAL_NVIC_SetPriority(EXTI1_IRQn, 5, 0);
