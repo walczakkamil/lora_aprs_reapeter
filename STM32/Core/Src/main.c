@@ -3,23 +3,104 @@
 #include <stdio.h>
 #include <stdarg.h>
 
+/* =============================================================================
+ * Logging / debug options
+ * =============================================================================
+ * You can control UART verbosity without touching the main radio logic.
+ *
+ * Compile-time:
+ *   - Define DEBUG (e.g. -DDEBUG) to get a more verbose default.
+ *   - Or override APP_LOG_LEVEL_DEFAULT explicitly.
+ *
+ * Levels:
+ *   0 = OFF   (no UART logs; PANIC still prints)
+ *   1 = ERROR
+ *   2 = INFO
+ *   3 = DEBUG
+ *
+ * Optional features:
+ *   - APP_LOG_AUTO_MUTE_MS:
+ *       If > 0, automatically disables UART logs after N ms from boot.
+ *   - APP_LOG_SERVICE_PIN_ENABLE:
+ *       If 1, a "service pin" (button/jumper) forces logs ON at boot.
+ *
+ * Runtime:
+ *   - UART_LogEnable(1/0) toggles the log gate.
+ *   - LOG_SetLevel(...) changes verbosity.
+ * =============================================================================
+ */
+#define APP_LOG_LEVEL_DEFAULT 0u
+
+#ifndef APP_LOG_LEVEL_DEFAULT
+  #ifdef DEBUG
+    #define APP_LOG_LEVEL_DEFAULT 3u
+  #else
+    #define APP_LOG_LEVEL_DEFAULT 2u
+  #endif
+#endif
+
+#ifndef APP_LOG_AUTO_MUTE_MS
+  #define APP_LOG_AUTO_MUTE_MS 0u
+#endif
+
+#ifndef APP_LOG_SERVICE_PIN_ENABLE
+  #define APP_LOG_SERVICE_PIN_ENABLE 0u
+#endif
+
+#if (APP_LOG_SERVICE_PIN_ENABLE)
+  #ifndef APP_LOG_SERVICE_GPIO_Port
+    #define APP_LOG_SERVICE_GPIO_Port GPIOB
+  #endif
+  #ifndef APP_LOG_SERVICE_Pin
+    #define APP_LOG_SERVICE_Pin GPIO_PIN_12
+  #endif
+  #ifndef APP_LOG_SERVICE_PIN_ACTIVE
+    #define APP_LOG_SERVICE_PIN_ACTIVE GPIO_PIN_RESET
+  #endif
+#endif
+
+
+/**
+ * @file main.c
+ * @brief Dual SX127x (RFM9x) LoRa receive + forward firmware (STM32F103).
+ *
+ * Features:
+ *  - Two SX127x radios on a shared SPI bus (separate NSS/RESET/DIO0).
+ *  - RX1 runs in continuous RX and captures LoRa frames.
+ *  - RX2 is used as a low-duty TX forwarder (stays in STDBY most of the time to save power).
+ *  - UART logging is gated by a runtime flag (g_uart_log_enabled) to reduce power usage.
+ *  - A panic path (system_panic_reset) always emits a short message and resets the MCU.
+ *
+ * Notes:
+ *  - This file is intentionally self-contained (minimal init helpers included).
+ *  - Pin mapping must match your CubeMX project / board wiring.
+ */
+
 /* ===== Global buffers to reduce stack usage (prevents hardfault-like hangs) ===== */
+/// @brief Shared UART formatting buffer (global to reduce stack usage).
 static char g_uart_buf[256];
+/// @brief Shared APRS dump buffer (HEX/ASCII output formatting).
 static char g_aprs_out[240];
+/// @brief RX1 raw payload buffer (max 128 bytes in this demo).
 static uint8_t g_rx_buf_1[128];
+/// @brief RX2 raw payload buffer (not used when RX2 is disabled; kept for symmetry).
 static uint8_t g_rx_buf_2[128];
 
 /* TX queue for Radio2 forwarding */
+/// @brief Queued payload to forward on RX2 (TX buffer).
 static uint8_t g_tx_buf_2[128];
+/// @brief Length of queued TX payload for RX2.
 static volatile uint8_t g_tx_len_2 = 0;
+/// @brief Set to 1 when there is a payload pending TX on RX2.
 static volatile uint8_t g_tx_pending_2 = 0;
 
+/// @brief Simple watchdog counter for repeated CRC errors.
 static uint8_t crc_storm = 0;
 
 /* =========================================================
-   DWA MODUŁY SX127x NA JEDNYM SPI1 (wariant A)
+   TWO SX127x MODULES ON A SINGLE SPI1 BUS (Variant A)
 
-   Wspólne SPI1:
+   Shared SPI1:
      SCK  PA5
      MISO PA6
      MOSI PA7
@@ -38,7 +119,7 @@ static uint8_t crc_storm = 0;
      TX PA9
      RX PA10
 
-   LED (z CubeMX) np. PC13 albo inny - zależy od projektu.
+   LED (CubeMX) e.g. PC13 (depends on your board/project).
    ========================================================= */
 
 
@@ -146,49 +227,87 @@ static void MX_USART1_UART_Init(void);
 static void MX_SPI1_Init(void);
 void Error_Handler(void);
 
-/* =========================
-   UART helpers (log gating)
-   ========================= */
 
-/*
- * g_uart_log_enabled:
- *  - 1 => logi na UART/COM włączone
- *  - 0 => logi wyłączone (cisza na UART), oszczędność energii
+/* =========================
+ * UART / logging helpers
+ * ========================= */
+
+/**
+ * @brief Log levels (higher = more verbose).
  */
-#ifdef DEBUG
-static volatile uint8_t g_uart_log_enabled = 1;
+typedef enum
+{
+  LOG_LEVEL_OFF   = 0,
+  LOG_LEVEL_ERROR = 1,
+  LOG_LEVEL_INFO  = 2,
+  LOG_LEVEL_DEBUG = 3
+} log_level_t;
+
+/**
+ * @brief Global log gate. When 0, logs are silent (except PANIC).
+ */
+static volatile uint8_t g_uart_log_enabled =
+#if (APP_LOG_LEVEL_DEFAULT == 0u)
+  0u;
 #else
-static volatile uint8_t g_uart_log_enabled = 0;
+  1u;
 #endif
 
+/**
+ * @brief Global log level (verbosity threshold).
+ */
+static volatile log_level_t g_log_level = (log_level_t)APP_LOG_LEVEL_DEFAULT;
+
+/**
+ * @brief Enable/disable UART logs at runtime (fast kill-switch).
+ */
 static inline void UART_LogEnable(uint8_t enable)
 {
   g_uart_log_enabled = (enable ? 1u : 0u);
 }
 
-/* Niegatowany TX – używamy tylko w PANIC/reset itp. */
+/**
+ * @brief Set log level at runtime.
+ */
+static inline void LOG_SetLevel(log_level_t level)
+{
+  g_log_level = level;
+}
+
+/**
+ * @brief Returns 1 if a message at @p level should be printed.
+ */
+static inline uint8_t LOG_IsEnabled(log_level_t level)
+{
+  if (!g_uart_log_enabled) return 0u;
+  if ((uint8_t)g_log_level < (uint8_t)level) return 0u;
+  return 1u;
+}
+
+/**
+ * @brief Ungated UART transmit (used for PANIC and other must-print paths).
+ */
 static void uart_raw_tx(const uint8_t *data, uint16_t len)
 {
   if (data == NULL || len == 0) return;
   (void)HAL_UART_Transmit(&huart1, (uint8_t*)data, len, 200);
 }
 
-/* Gatowany TX – normalne logi przechodzą tylko gdy flaga=1 */
+/**
+ * @brief Gated UART transmit (normal logs should use this).
+ */
 static void uart_tx(const uint8_t *data, uint16_t len)
 {
   if (!g_uart_log_enabled) return;
   uart_raw_tx(data, len);
 }
 
-static void uart_puts(const char *s)
+/**
+ * @brief Print formatted log line at given level.
+ */
+static void LOG_Printf(log_level_t level, const char *fmt, ...)
 {
-  if (s == NULL) return;
-  uart_tx((const uint8_t*)s, (uint16_t)strlen(s));
-}
-
-static void uart_printf(const char *fmt, ...)
-{
-  if (!g_uart_log_enabled) return;
+  if (!LOG_IsEnabled(level)) return;
 
   va_list ap;
   va_start(ap, fmt);
@@ -198,11 +317,60 @@ static void uart_printf(const char *fmt, ...)
   uart_raw_tx((const uint8_t*)g_uart_buf, (uint16_t)strlen(g_uart_buf));
 }
 
+/* Convenience macros */
+#define LOGE(...) LOG_Printf(LOG_LEVEL_ERROR, __VA_ARGS__)
+#define LOGI(...) LOG_Printf(LOG_LEVEL_INFO,  __VA_ARGS__)
+#define LOGD(...) LOG_Printf(LOG_LEVEL_DEBUG, __VA_ARGS__)
+
+/* Backward-compatible wrappers (treat as INFO) */
+static void uart_puts(const char *s)
+{
+  if (s == NULL) return;
+  if (!LOG_IsEnabled(LOG_LEVEL_INFO)) return;
+  uart_raw_tx((const uint8_t*)s, (uint16_t)strlen(s));
+}
+
+static void uart_printf(const char *fmt, ...)
+{
+  if (!LOG_IsEnabled(LOG_LEVEL_INFO)) return;
+
+  va_list ap;
+  va_start(ap, fmt);
+  vsnprintf(g_uart_buf, sizeof(g_uart_buf), fmt, ap);
+  va_end(ap);
+
+  uart_raw_tx((const uint8_t*)g_uart_buf, (uint16_t)strlen(g_uart_buf));
+}
+
+/**
+ * @brief Initialize logging policy (defaults + optional service pin override).
+ *
+ * Must be called after MX_GPIO_Init() (to read service pin) and after
+ * MX_USART1_UART_Init() (to be able to print).
+ */
+static void LOG_InitFromConfig(void)
+{
+#if (APP_LOG_LEVEL_DEFAULT == 0u)
+  g_uart_log_enabled = 0u;
+#else
+  g_uart_log_enabled = 1u;
+#endif
+  g_log_level = (log_level_t)APP_LOG_LEVEL_DEFAULT;
+
+#if (APP_LOG_SERVICE_PIN_ENABLE)
+  if (HAL_GPIO_ReadPin(APP_LOG_SERVICE_GPIO_Port, APP_LOG_SERVICE_Pin) == APP_LOG_SERVICE_PIN_ACTIVE)
+  {
+    g_uart_log_enabled = 1u;
+    if ((uint8_t)g_log_level < (uint8_t)LOG_LEVEL_DEBUG)
+      g_log_level = LOG_LEVEL_DEBUG;
+  }
+#endif
+}
+
 static void system_panic_reset(const char *reason)
 {
-  /* PANIC zawsze wysyłamy (nawet gdy logi są wyłączone) */
-  int n = snprintf(g_uart_buf, sizeof(g_uart_buf), "PANIC: %s -> RESET\r\n", (reason ? reason : "unknown"));
-  if (n > 0) uart_raw_tx((const uint8_t*)g_uart_buf, (uint16_t)n);
+  /* Ostatni log – krótki i bezpieczny */
+  uart_printf("PANIC: %s -> RESET\r\n", reason);
 
   /* Daj UARTowi chwilę na wysłanie */
   HAL_Delay(50);
@@ -215,18 +383,18 @@ static void system_panic_reset(const char *reason)
   while (1) {}
 }
 
-/* =========================
-   SPI lock (prosty)
-   ========================= */
+/**
+ * @section spi_lock SPI bus lock
+ * The radios share one SPI peripheral. We use a minimal spin-lock to prevent
+ * concurrent transfers (e.g. from interrupt context vs. main loop).
+ */
 static volatile uint8_t spi_busy = 0;
 static volatile uint32_t spi_err_count = 0;
 
 static void SPI_Lock(void)   { while (spi_busy) {} spi_busy = 1; }
 static void SPI_Unlock(void) { spi_busy = 0; }
 
-/* =========================
-   NSS helpers
-   ========================= */
+/** @brief Assert/deassert NSS (chip select) for a selected radio. */
 static inline void RADIO_NSS_LOW(uint8_t rid)
 {
   if (rid == RID_RX1) HAL_GPIO_WritePin(RX1_NSS_GPIO_Port, RX1_NSS_Pin, GPIO_PIN_RESET);
@@ -475,35 +643,43 @@ static void RADIO_TX_Send(uint8_t rid, const uint8_t *payload, uint8_t len)
    ========================= */
 static void print_aprs_payload(uint8_t rid, const uint8_t *buf, uint8_t len)
 {
+#if (APP_LOG_LEVEL_DEFAULT < LOG_LEVEL_DEBUG)
+  (void)rid; (void)buf; (void)len;
+  return;
+#endif
+
   uint8_t start = 0;
 
-  // iGate header: 3C FF 01
+  /* Optional iGate header: 3C FF 01 */
   if (len > 3 && buf[0] == 0x3C && buf[1] == 0xFF && buf[2] == 0x01)
     start = 3;
 
   char *out = g_aprs_out;
   int pos = 0;
 
-  pos += snprintf(out + pos, sizeof(g_aprs_out) - pos, "R%u HEX:", (unsigned)rid);
+  pos += snprintf(out + pos, sizeof(g_aprs_out) - pos,
+                  "R%u HEX:", (unsigned)rid);
   for (uint8_t i = 0; i < len && pos < (int)sizeof(g_aprs_out) - 4; i++)
-    pos += snprintf(out + pos, sizeof(g_aprs_out) - pos, " %02X", buf[i]);
+    pos += snprintf(out + pos, sizeof(g_aprs_out) - pos,
+                    " %02X", buf[i]);
   pos += snprintf(out + pos, sizeof(g_aprs_out) - pos, "\r\n");
 
-  uart_tx((const uint8_t*)out, (uint16_t)pos);
+  LOGD("%s", out);
 
   pos = 0;
-  pos += snprintf(out + pos, sizeof(g_aprs_out) - pos, "R%u ASCII: ", (unsigned)rid);
+  pos += snprintf(out + pos, sizeof(g_aprs_out) - pos,
+                  "R%u ASCII: ", (unsigned)rid);
 
   for (uint8_t i = start; i < len && pos < (int)sizeof(g_aprs_out) - 3; i++)
   {
     uint8_t c = buf[i];
-    if (c >= 32 && c <= 126) out[pos++] = (char)c;
-    else out[pos++] = '.';
+    out[pos++] = (c >= 32 && c <= 126) ? (char)c : '.';
   }
 
   out[pos++] = '\r';
   out[pos++] = '\n';
-  uart_tx((const uint8_t*)out, (uint16_t)pos);
+
+  LOGD("%s", out);
 }
 
 /* =========================
@@ -575,9 +751,7 @@ static void RADIO_RX_ProcessIfAny(uint8_t rid)
   HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
 }
 
-/* =========================================================
-   EXTI flags (ustawiane w HAL_GPIO_EXTI_Callback)
-   ========================================================= */
+/** @brief EXTI flags set in HAL_GPIO_EXTI_Callback() and consumed in the main loop. */
 static volatile uint8_t rx1_dio0_flag = 0;
 static volatile uint8_t rx2_dio0_flag = 0;
 
@@ -596,6 +770,15 @@ int main(void)
   MX_GPIO_Init();
   MX_USART1_UART_Init();
   MX_SPI1_Init();
+
+  LOG_InitFromConfig();
+
+  if (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_12) == GPIO_PIN_RESET)
+  {
+    UART_LogEnable(1);
+    LOG_SetLevel(LOG_LEVEL_DEBUG);
+    uart_raw_tx((uint8_t*)"DEBUG PIN ACTIVE\r\n", 18);
+  }
 
   uart_puts("\r\n=== DUAL SX127x (RX1 RX, RX2 TX-FWD) START ===\r\n");
 
@@ -640,6 +823,11 @@ int main(void)
   uart_puts("Start RX continuous on RX1 and RX2...\r\n");
 
   uint32_t last_poll = HAL_GetTick();
+  uint32_t log_boot_t0 = HAL_GetTick();
+  uint8_t  log_force_on = 0;
+#if (APP_LOG_SERVICE_PIN_ENABLE)
+  if (HAL_GPIO_ReadPin(APP_LOG_SERVICE_GPIO_Port, APP_LOG_SERVICE_Pin) == APP_LOG_SERVICE_PIN_ACTIVE) log_force_on = 1;
+#endif
 
   while (1)
   {
@@ -649,6 +837,15 @@ int main(void)
       last_led = HAL_GetTick();
       // HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin); // opcjonalnie
     }
+
+
+    /* Optional: auto-mute logs after boot (saves power / reduces UART spam) */
+#if (APP_LOG_AUTO_MUTE_MS > 0u)
+    if (!log_force_on && g_uart_log_enabled && (HAL_GetTick() - log_boot_t0 >= APP_LOG_AUTO_MUTE_MS))
+    {
+      UART_LogEnable(0);
+    }
+#endif
 
     // EXTI-driven
     if (rx1_dio0_flag) { rx1_dio0_flag = 0; RADIO_RX_ProcessIfAny(RID_RX1); }
@@ -737,7 +934,16 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(RX1_RST_GPIO_Port, RX1_RST_Pin, GPIO_PIN_SET);
   HAL_GPIO_WritePin(RX2_RST_GPIO_Port, RX2_RST_Pin, GPIO_PIN_SET);
 
-  // DIO0 inputs with EXTI rising
+
+#if (APP_LOG_SERVICE_PIN_ENABLE)
+  /* Service pin input (used to force logging ON at boot). Adjust Pull as needed. */
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLUP; /* common: button/jumper to GND */
+  GPIO_InitStruct.Pin = APP_LOG_SERVICE_Pin;
+  HAL_GPIO_Init(APP_LOG_SERVICE_GPIO_Port, &GPIO_InitStruct);
+#endif
+
+// DIO0 inputs with EXTI rising
   GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
 
@@ -756,6 +962,11 @@ static void MX_GPIO_Init(void)
 
   HAL_NVIC_SetPriority(EXTI15_10_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
+
+  GPIO_InitStruct.Pin  = GPIO_PIN_12;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 }
 
 static void MX_SPI1_Init(void)
