@@ -147,26 +147,62 @@ static void MX_SPI1_Init(void);
 void Error_Handler(void);
 
 /* =========================
-   UART helpers
+   UART helpers (log gating)
    ========================= */
+
+/*
+ * g_uart_log_enabled:
+ *  - 1 => logi na UART/COM włączone
+ *  - 0 => logi wyłączone (cisza na UART), oszczędność energii
+ */
+#ifdef DEBUG
+static volatile uint8_t g_uart_log_enabled = 1;
+#else
+static volatile uint8_t g_uart_log_enabled = 0;
+#endif
+
+static inline void UART_LogEnable(uint8_t enable)
+{
+  g_uart_log_enabled = (enable ? 1u : 0u);
+}
+
+/* Niegatowany TX – używamy tylko w PANIC/reset itp. */
+static void uart_raw_tx(const uint8_t *data, uint16_t len)
+{
+  if (data == NULL || len == 0) return;
+  (void)HAL_UART_Transmit(&huart1, (uint8_t*)data, len, 200);
+}
+
+/* Gatowany TX – normalne logi przechodzą tylko gdy flaga=1 */
+static void uart_tx(const uint8_t *data, uint16_t len)
+{
+  if (!g_uart_log_enabled) return;
+  uart_raw_tx(data, len);
+}
+
 static void uart_puts(const char *s)
 {
-  HAL_UART_Transmit(&huart1, (uint8_t*)s, (uint16_t)strlen(s), 200);
+  if (s == NULL) return;
+  uart_tx((const uint8_t*)s, (uint16_t)strlen(s));
 }
 
 static void uart_printf(const char *fmt, ...)
 {
+  if (!g_uart_log_enabled) return;
+
   va_list ap;
   va_start(ap, fmt);
   vsnprintf(g_uart_buf, sizeof(g_uart_buf), fmt, ap);
   va_end(ap);
-  HAL_UART_Transmit(&huart1, (uint8_t*)g_uart_buf, (uint16_t)strlen(g_uart_buf), 200);
+
+  uart_raw_tx((const uint8_t*)g_uart_buf, (uint16_t)strlen(g_uart_buf));
 }
 
 static void system_panic_reset(const char *reason)
 {
-  /* Ostatni log – krótki i bezpieczny */
-  uart_printf("PANIC: %s -> RESET\r\n", reason);
+  /* PANIC zawsze wysyłamy (nawet gdy logi są wyłączone) */
+  int n = snprintf(g_uart_buf, sizeof(g_uart_buf), "PANIC: %s -> RESET\r\n", (reason ? reason : "unknown"));
+  if (n > 0) uart_raw_tx((const uint8_t*)g_uart_buf, (uint16_t)n);
 
   /* Daj UARTowi chwilę na wysłanie */
   HAL_Delay(50);
@@ -453,7 +489,7 @@ static void print_aprs_payload(uint8_t rid, const uint8_t *buf, uint8_t len)
     pos += snprintf(out + pos, sizeof(g_aprs_out) - pos, " %02X", buf[i]);
   pos += snprintf(out + pos, sizeof(g_aprs_out) - pos, "\r\n");
 
-  (void)HAL_UART_Transmit(&huart1, (uint8_t*)out, (uint16_t)pos, 120);
+  uart_tx((const uint8_t*)out, (uint16_t)pos);
 
   pos = 0;
   pos += snprintf(out + pos, sizeof(g_aprs_out) - pos, "R%u ASCII: ", (unsigned)rid);
@@ -467,7 +503,7 @@ static void print_aprs_payload(uint8_t rid, const uint8_t *buf, uint8_t len)
 
   out[pos++] = '\r';
   out[pos++] = '\n';
-  (void)HAL_UART_Transmit(&huart1, (uint8_t*)out, (uint16_t)pos, 120);
+  uart_tx((const uint8_t*)out, (uint16_t)pos);
 }
 
 /* =========================
