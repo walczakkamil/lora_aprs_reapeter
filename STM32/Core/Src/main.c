@@ -1,3 +1,10 @@
+/* --- APRS TELEMETRY DEFINITIONS --- */
+/* Channel 1: VDD */
+#define APRS_TLM_PARM  "PARM.VDD,,,,,"
+#define APRS_TLM_UNIT  "UNIT.V,,,,,"
+#define APRS_TLM_EQNS  "EQNS.0,0.02,0,0,0,0,0,0,0,0,0,0,0,0,0"
+/* T#sss,aaa,bbb,ccc,ddd,eee,xxxxxxxx */
+
 #include "stm32f1xx_hal.h"
 #include <string.h>
 #include <stdio.h>
@@ -94,6 +101,9 @@ static volatile uint8_t g_tx_len_2 = 0;
 /// @brief Set to 1 when there is a payload pending TX on RX2.
 static volatile uint8_t g_tx_pending_2 = 0;
 
+/* Telemetry TX payload (separate from forward queue) */
+static uint8_t g_telem_buf[128];
+
 /// @brief Simple watchdog counter for repeated CRC errors.
 static uint8_t crc_storm = 0;
 
@@ -126,10 +136,62 @@ static uint8_t crc_storm = 0;
 /* ===================== Handles ===================== */
 SPI_HandleTypeDef hspi1;
 UART_HandleTypeDef huart1;
+ADC_HandleTypeDef hadc1;
 
 /* ===================== Radio IDs ===================== */
 #define RID_RX1 1
 #define RID_RX2 2
+
+/* ===================== Telemetry / power monitor =====================
+ * - Measure VDD (3.3V rail) via internal VrefInt using ADC1
+ * - Send an APRS status/telemetry line once per hour from SP7FM-1
+ * - First transmission happens immediately after boot
+ * - Keep the TX radio (RID_RX2) in SLEEP between transmissions/forwards
+ *   to reduce power consumption.
+ */
+#ifndef TELEM_CALLSIGN
+#define TELEM_CALLSIGN "SP7FM-1"
+#endif
+
+#ifndef TELEM_DEST
+#define TELEM_DEST     "APRS"
+#endif
+
+#ifndef TELEM_INTERVAL_MS
+#define TELEM_INTERVAL_MS (3600000u) /* 1h */
+#endif
+/* Fixed position beacon (required so aprs.fi can place the station on the map).
+ * Format uses uncompressed APRS position: !DDMM.mmN/DDDMM.mmE<sym><comment>
+ *
+ * IMPORTANT: Set APRS_LAT/APRS_LON to your actual coordinates.
+ * Example:
+ *   #define APRS_LAT "4916.45N"
+ *   #define APRS_LON "01902.12E"
+ */
+#ifndef APRS_LAT
+#define APRS_LAT "51.737N"
+#endif
+#ifndef APRS_LON
+#define APRS_LON "19.574E"
+#endif
+#ifndef APRS_SYMBOL_TABLE
+#define APRS_SYMBOL_TABLE '/'
+#endif
+#ifndef APRS_SYMBOL_CODE
+#define APRS_SYMBOL_CODE '#'
+#endif
+#ifndef APRS_BEACON_COMMENT
+#define APRS_BEACON_COMMENT "LoRa APRS DIGI (solar)"
+#endif
+
+
+
+/* VrefInt nominal voltage (mV). You can improve accuracy by calibrating this
+ * once against a known-good VDD and adjusting the constant.
+ */
+#ifndef VREFINT_MV
+#define VREFINT_MV 1200u
+#endif
 
 /* ===================== GPIO mapping (DOPASUJ JEŚLI INNE) ===================== */
 #define RX1_NSS_GPIO_Port GPIOA
@@ -302,6 +364,7 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_USART1_UART_Init(void);
 static void MX_SPI1_Init(void);
+static void MX_ADC1_Init(void);
 void Error_Handler(void);
 
 
@@ -714,8 +777,113 @@ static void RADIO_TX_Send(uint8_t rid, const uint8_t *payload, uint8_t len)
   /* TX success indication: two short blinks */
   LED_Blink(2);
 
-  /* R2 wraca do STDBY (oszczędność energii) */
-  RADIO_SetMode(rid, MODE_STDBY);
+  /* R2 wraca do SLEEP (oszczędność energii) */
+  RADIO_SetMode(rid, MODE_SLEEP);
+}
+
+/* =========================
+   ADC: VDD via VrefInt
+   ========================= */
+static uint16_t ADC_ReadVrefintRaw(void)
+{
+  ADC_ChannelConfTypeDef sConfig = {0};
+
+  sConfig.Channel      = ADC_CHANNEL_VREFINT;
+  sConfig.Rank         = ADC_REGULAR_RANK_1;
+  sConfig.SamplingTime = ADC_SAMPLETIME_239CYCLES_5;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    system_panic_reset("ADC cfg");
+  }
+
+  if (HAL_ADC_Start(&hadc1) != HAL_OK)
+  {
+    system_panic_reset("ADC start");
+  }
+
+  if (HAL_ADC_PollForConversion(&hadc1, 20) != HAL_OK)
+  {
+    (void)HAL_ADC_Stop(&hadc1);
+    system_panic_reset("ADC poll");
+  }
+
+  uint16_t raw = (uint16_t)HAL_ADC_GetValue(&hadc1);
+  (void)HAL_ADC_Stop(&hadc1);
+  return raw;
+}
+
+static float ReadVdd_V(void)
+{
+  /* VDD = VrefInt * 4095 / ADC(VrefInt) */
+  uint16_t raw = ADC_ReadVrefintRaw();
+  if (raw == 0) return 0.0f;
+  float vdd = ((float)VREFINT_MV * 4095.0f) / ((float)raw * 1000.0f);
+  return vdd;
+}
+
+/* =========================
+   APRS telemetry/status TX
+   ========================= */
+static void TELEMETRY_SendDefsOnce(void)
+{
+  /* Send PARM/UNIT/EQNS once per boot so aprs.fi can label/scale telemetry plots. */
+  uint8_t buf[200];
+  int n;
+
+  n = snprintf((char*)buf, sizeof(buf), "%s>%s:%s", TELEM_CALLSIGN, TELEM_DEST, APRS_TLM_PARM);
+  if (n > 0) RADIO_TX_Send(RID_RX2, buf, (uint8_t)((n > (int)sizeof(buf)) ? (int)sizeof(buf) : n));
+  HAL_Delay(800);
+
+  n = snprintf((char*)buf, sizeof(buf), "%s>%s:%s", TELEM_CALLSIGN, TELEM_DEST, APRS_TLM_UNIT);
+  if (n > 0) RADIO_TX_Send(RID_RX2, buf, (uint8_t)((n > (int)sizeof(buf)) ? (int)sizeof(buf) : n));
+  HAL_Delay(800);
+
+  n = snprintf((char*)buf, sizeof(buf), "%s>%s:%s", TELEM_CALLSIGN, TELEM_DEST, APRS_TLM_EQNS);
+  if (n > 0) RADIO_TX_Send(RID_RX2, buf, (uint8_t)((n > (int)sizeof(buf)) ? (int)sizeof(buf) : n));
+  HAL_Delay(800);
+}
+
+static void APRS_SendPositionOnce(void)
+{
+  /* Fixed position (map placement). */
+  uint8_t buf[180];
+  int n = snprintf((char*)buf, sizeof(buf),
+                   "%s>%s:!%s%c%s%c%s",
+                   TELEM_CALLSIGN, TELEM_DEST,
+                   APRS_LAT, (char)APRS_SYMBOL_TABLE,
+                   APRS_LON, (char)APRS_SYMBOL_CODE,
+                   APRS_BEACON_COMMENT);
+  if (n <= 0) return;
+  if (n > (int)sizeof(buf)) n = (int)sizeof(buf);
+  RADIO_TX_Send(RID_RX2, buf, (uint8_t)n);
+}
+
+static void TELEMETRY_SendVddOnce(void)
+{
+  static uint16_t seq = 0; /* 000..999 */
+  float vdd = ReadVdd_V();
+
+  /* Convert VDD [V] into A1 [0..255] with scale: V = A1 * 0.02  (A1 = V*50) */
+  int a1 = (int)(vdd * 50.0f + 0.5f);
+  if (a1 < 0) a1 = 0;
+  if (a1 > 255) a1 = 255;
+
+  /* Debug print after boot and each telemetry send */
+  LOGI("[TLM] VDD=%.3f V -> A1=%d\r\n", (double)vdd, a1);
+
+  /* APRS telemetry frame: T#sss,aaa,bbb,ccc,ddd,eee,xxxxxxxx */
+  int n = snprintf((char*)g_telem_buf, sizeof(g_telem_buf),
+                   "%s>%s:T#%03u,%03u,000,000,000,000,00000000",
+                   TELEM_CALLSIGN, TELEM_DEST,
+                   (unsigned)(seq % 1000u),
+                   (unsigned)a1);
+  if (n <= 0) return;
+  if (n > (int)sizeof(g_telem_buf)) n = (int)sizeof(g_telem_buf);
+
+  /* Wake TX radio, send, then it goes back to SLEEP in RADIO_TX_Send(). */
+  RADIO_TX_Send(RID_RX2, g_telem_buf, (uint8_t)n);
+
+  seq = (uint16_t)((seq + 1u) % 1000u);
 }
 
 /* =========================
@@ -850,6 +1018,7 @@ int main(void)
   MX_GPIO_Init();
   MX_USART1_UART_Init();
   MX_SPI1_Init();
+  MX_ADC1_Init();
 
   LOG_InitFromConfig();
 
@@ -887,8 +1056,8 @@ int main(void)
 
   RADIO_RX_LoRaInit(RID_RX2);
   RADIO_SetFrequency_Hz(RID_RX2, RX2_LORA_FREQ_HZ);
-  /* R2 stays in STDBY until TX */
-  RADIO_SetMode(RID_RX2, MODE_STDBY);
+  /* R2 stays in SLEEP until TX (lower power) */
+  RADIO_SetMode(RID_RX2, MODE_SLEEP);
 
   LED_OFF();
 
@@ -902,6 +1071,17 @@ int main(void)
   }
 
   uart_puts("Start RX continuous on RX1 and RX2...\r\n");
+
+  /* --- Telemetry setup ---
+   - Send APRS telemetry definitions (PARM/UNIT/EQNS) once per boot
+   - Send a fixed position beacon once per boot (required for map placement)
+   - Send first VDD telemetry immediately after boot
+   - Then send VDD telemetry once per hour
+ */
+  TELEMETRY_SendDefsOnce();
+  APRS_SendPositionOnce();
+  TELEMETRY_SendVddOnce();
+  uint32_t next_telem_tick = HAL_GetTick() + TELEM_INTERVAL_MS;
 
   uint32_t last_poll = HAL_GetTick();
   uint32_t log_boot_t0 = HAL_GetTick();
@@ -942,6 +1122,13 @@ int main(void)
 
       uart_printf("R2 TX: forwarding %u bytes\r\n", (unsigned)len);
       RADIO_TX_Send(RID_RX2, g_tx_buf_2, len);
+    }
+
+    /* Hourly VDD telemetry (skip if a forward TX is pending) */
+    if (!g_tx_pending_2 && (int32_t)(HAL_GetTick() - next_telem_tick) >= 0)
+    {
+      TELEMETRY_SendVddOnce();
+      next_telem_tick += TELEM_INTERVAL_MS;
     }
 
     // polling co ~50ms (działa nawet bez EXTI w it.c)
@@ -1088,6 +1275,23 @@ static void MX_USART1_UART_Init(void)
   huart1.Init.OverSampling = UART_OVERSAMPLING_16;
 
   if (HAL_UART_Init(&huart1) != HAL_OK) Error_Handler();
+}
+
+static void MX_ADC1_Init(void)
+{
+  __HAL_RCC_ADC1_CLK_ENABLE();
+
+  hadc1.Instance = ADC1;
+  hadc1.Init.ScanConvMode = ADC_SCAN_DISABLE;
+  hadc1.Init.ContinuousConvMode = DISABLE;
+  hadc1.Init.DiscontinuousConvMode = DISABLE;
+  hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
+  hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
+  hadc1.Init.NbrOfConversion = 1;
+  if (HAL_ADC_Init(&hadc1) != HAL_OK) Error_Handler();
+
+  /* Enable ADC + run calibration once at boot for better stability */
+  if (HAL_ADCEx_Calibration_Start(&hadc1) != HAL_OK) Error_Handler();
 }
 
 void Error_Handler(void)

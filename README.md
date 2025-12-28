@@ -124,6 +124,11 @@ Both radios use identical LoRa parameters, except for frequency:
 - Payload dump:
   - HEX
   - ASCII (printable characters)
+- Debug mode
+  - A9 RX - TX UART
+  - A10 TX - RX UART
+  - GNG - GND UART
+  - B12 - GND - debug enabler
 
 Example:
 ```
@@ -150,6 +155,91 @@ R2 TX: forwarding 40 bytes
 - No reception on TX radio
 - Suitable for battery or solar-powered installations
 
+
+---
+
+# 📡 LoRa APRS Repeater – Radio State Flow
+
+This document describes the **runtime flow and radio state management** used in the LoRa APRS Repeater project based on **STM32 (BluePill) + SX127x**.
+
+The design uses **two LoRa radios**:
+
+- 📥 **RX1 (RID_RX1)** – continuous receiver (LoRa APRS RX)
+- 📤 **TX / RX2 (RID_RX2)** – transmitter only (forwarding + telemetry)
+
+The main goals are:
+- 🔄 continuous reception on RX1,
+- 🔋 very low power consumption on TX/RX2,
+- 📊 periodic APRS telemetry transmission (VDD) every 1 hour,
+- 🚀 immediate forwarding of received APRS frames.
+
+---
+
+## ⚙️ Radio Modes Overview
+
+| Mode | Description | Typical Current | Notes |
+|---|---|---|---|
+| 💤 `MODE_SLEEP` | Deep sleep | ~µA | Oscillator off, registers lost |
+| ⏸️ `MODE_STDBY` | Standby / ready | ~mA | Fast TX/RX start, registers kept |
+| 📡 `MODE_RX_CONTINUOUS` | Continuous receive | ~10–12 mA | RX active |
+| 📶 `MODE_TX` | Transmit | up to 120 mA | Depends on power level |
+
+---
+
+## 🔁 Runtime Flow – State Table
+
+### 🗂️ Legend
+- **RX1** = RID_RX1 (receiver radio)
+- **TX/RX2** = RID_RX2 (transmit-only radio)
+
+| Step | Trigger | RX1 (RID_RX1) | TX / RX2 (RID_RX2) | Code Activity | Purpose |
+|---|---|---|---|---|---|
+| 0️⃣ | MCU reset | Not configured | Not configured | HAL init, UART, SPI, ADC init, SX127x reset, REG_VERSION check | 🟢 System startup |
+| 1️⃣ | LoRa configuration | Configured → 📡 RX_CONTINUOUS | Configured → 💤 SLEEP | `RADIO_RX_LoRaInit()` + `RADIO_RX_StartContinuous()` | RX1 starts listening, TX sleeps |
+| 2️⃣ | Startup telemetry | 📡 RX_CONTINUOUS | 💤 → ⏸️ → 📶 → 💤 | `TELEMETRY_SendVddOnce()` | 📊 Immediate VDD telemetry after boot |
+| 3️⃣ | Normal operation | 📡 RX_CONTINUOUS | 💤 SLEEP | Main loop polling RX1, checking telemetry timer | 🔋 Idle / low power |
+| 4️⃣ | Packet received | 📡 RX IRQ | 💤 SLEEP | RX1 FIFO read, packet buffered, `g_tx_pending_2 = 1` | 📥 Prepare forwarding |
+| 5️⃣ | Packet forward | TX pending flag | 📡 RX_CONTINUOUS | 💤 → ⏸️ → 📶 → 💤 | `RADIO_TX_Send()` forwards APRS frame | 🚀 Forward packet |
+| 6️⃣ | Periodic telemetry | ⏱️ 1h timer | 📡 RX_CONTINUOUS | 💤 → ⏸️ → 📶 → 💤 | APRS telemetry `T#...` frame | 📈 VDD history |
+| 7️⃣ | Fault recovery | Error threshold | n/a | n/a | Panic reset (`NVIC_SystemReset`) | 🔁 Self-recovery |
+
+---
+
+## ✅ Why `MODE_SLEEP` After TX Is Correct Here
+
+Using 💤 `MODE_SLEEP` at the end of `RADIO_TX_Send()` is **intentional and correct** because:
+
+- 📤 TX/RX2 **does not perform reception**
+- ⏳ The next TX happens **minutes or hours later**
+- 🔋 Standby current would unnecessarily drain a solar-powered node
+- 🔄 Radio configuration is fully re-initialized before each TX
+
+This makes 💤 `MODE_SLEEP` the **most power-efficient choice** for this architecture.
+
+---
+
+## ⚠️ Important Rule
+
+> After exiting 💤 `MODE_SLEEP`, **LoRa configuration must be fully re-applied**.
+
+This project already follows this rule.
+
+---
+
+## 🧾 Summary
+
+- 📥 RX1 stays in `MODE_RX_CONTINUOUS`
+- 💤 TX/RX2 sleeps almost all the time
+- 📶 TX wakes up only to forward packets or send telemetry
+- 📊 Telemetry is sent:
+  - immediately after boot
+  - then every **1 hour**
+- 🔋 Power consumption is minimized without losing functionality
+
+---
+
+This flow is optimized for **solar-powered LoRa APRS infrastructure nodes** such as digipeaters or repeaters.
+
 ---
 
 ## 🚀 Future Improvements
@@ -161,6 +251,7 @@ R2 TX: forwarding 40 bytes
 - CAD-based reception
 - FreeRTOS support (optional)
 
+
 ---
 
 ## 📜 License
@@ -168,7 +259,6 @@ R2 TX: forwarding 40 bytes
 This project is provided for **educational and amateur radio use**.  
 Use it responsibly and according to your local radio regulations.
 
----
 
 ## 👤 Author 
 
