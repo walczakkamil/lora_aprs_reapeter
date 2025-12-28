@@ -128,8 +128,9 @@ Both radios use identical LoRa parameters, except for frequency:
 Example:
 ```
 R1 RX DONE: len=56 RSSI=-28 dBm SNR=11.5 dB
-HEX: 3C FF 01 02 ...
-ASCII: <..APRS....>
+R1 HEX: 3C FF 01 02 ...
+R1 ASCII: <..APRS....>
+R2 TX: forwarding 40 bytes
 ```
 
 ---
