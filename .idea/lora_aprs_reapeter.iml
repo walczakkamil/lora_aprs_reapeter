@@ -6,5 +6,6 @@
     <orderEntry type="sourceFolder" forTests="false" />
     <orderEntry type="module" module-name="aws" />
     <orderEntry type="module" module-name="Lora_RX" />
+    <orderEntry type="module" module-name="Lora_RX_gemini" />
   </component>
 </module>

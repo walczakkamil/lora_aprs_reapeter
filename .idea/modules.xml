@@ -3,6 +3,7 @@
   <component name="ProjectModuleManager">
     <modules>
       <module fileurl="file://$USER_HOME$/OneDrive/Documents/stm32/Lora_RX/.idea/Lora_RX.iml" filepath="$USER_HOME$/OneDrive/Documents/stm32/Lora_RX/.idea/Lora_RX.iml" />
+      <module fileurl="file://$USER_HOME$/OneDrive/Documents/stm32/Lora_RX_gemini/.idea/Lora_RX_gemini.iml" filepath="$USER_HOME$/OneDrive/Documents/stm32/Lora_RX_gemini/.idea/Lora_RX_gemini.iml" />
       <module fileurl="file://$PROJECT_DIR$/../aws/.idea/aws.iml" filepath="$PROJECT_DIR$/../aws/.idea/aws.iml" />
       <module fileurl="file://$PROJECT_DIR$/.idea/lora_aprs_reapeter.iml" filepath="$PROJECT_DIR$/.idea/lora_aprs_reapeter.iml" />
     </modules>
