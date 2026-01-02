@@ -286,13 +286,17 @@ float GetInternalVoltage(void) {
 }
 
 void SendTelemetry(void) {
-    char packet[128];
+    char packet[200]; // 128-> 200 zwiększam bufor dla bezpieczeństwa
     float voltage = GetInternalVoltage();
-    // Format: !5144.22N/01934.44E#Komentarz
-    sprintf(packet, "!5144.22N/01934.44E#SP7FM-1 BAT:%.2fV", voltage);
 
-    DebugPrint("TELEMETRY: %s\r\n", packet);
-    Queue_Push((uint8_t*)packet, strlen(packet));
+    // Format pełnej ramki LoRa APRS:
+    // 1. Nagłówek LoRa: < (0x3C), 0xFF, 0x01
+    // 2. Nagłówek AX.25: Źródło>Cel,Ścieżka:
+    // 3. Dane APRS: !Lat/Lon#Komentarz
+    sprintf(packet, "\x3c\xff\x01SP7FM-1>APRS,WIDE1-1:!5144.22N/01934.44E#SP7FM-1 BAT:%.2fV", voltage);
+
+    DebugPrint("TELEMETRY: %s\r\n", packet + 3); // +3 żeby nie wyświetlać krzaków w logu
+    Queue_Push((uint8_t*)packet, strlen(packet)); // Wysyłamy całość (z krzakami)
 }
 
 // Przerwanie EXTI (dla RX DIO0 - PB1)
@@ -352,6 +356,16 @@ int main(void)
   LoRa_Init(&loraTX);
   LoRa_SetMode(&loraTX, MODE_STDBY);
   DebugPrint("SYS: TX Init OK\r\n");
+
+  // Led na start
+  // LED ON (PC13 Low), delay, LED OFF (PC13 High)
+  HAL_GPIO_WritePin(LED_PORT, LED_PIN, GPIO_PIN_RESET);
+  HAL_Delay(500);
+  HAL_GPIO_WritePin(LED_PORT, LED_PIN, GPIO_PIN_SET);
+
+  // Telemetria na start
+  SendTelemetry();
+  lastTelemetryTime = HAL_GetTick();
 
   /* USER CODE END 2 */
 
