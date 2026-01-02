@@ -49,11 +49,11 @@ jobs:
         run: |
           sed -i 's/#define LORA_RX_FREQ.*/#define LORA_RX_FREQ    ${{ inputs.rx_freq }}/' STM32/Core/Src/main.c
           sed -i 's/#define LORA_TX_FREQ.*/#define LORA_TX_FREQ    ${{ inputs.tx_freq }}/' STM32/Core/Src/main.c
-          sed -i 's|#define APRS_CALLSIGN.*|#define APRS_CALLSIGN   "${{ inputs.callsign }}"|' STM32/Core/Src/main.c
+          sed -i 's|#define APRS_CALLSIGN.*|#define APRS_CALLSIGN "${{ inputs.callsign }}"|' STM32/Core/Src/main.c
           sed -i 's|#define APRS_COORDS.*|#define APRS_COORDS     "${{ inputs.coordinates }}"|' STM32/Core/Src/main.c
-          sed -i 's|#define LORA_SF.*|#define LORA_SF     "${{ inputs.lora_sf }}"|' STM32/Core/Src/main.c
-          sed -i 's|#define LORA_BW_IDX.*|#define LORA_BW_IDX     "${{ inputs.lora_bw_idx }}"|' STM32/Core/Src/main.c
-          sed -i 's|#define LORA_CR.*|#define LORA_CR     "${{ inputs.lora_cr }}"|' STM32/Core/Src/main.c
+          sed -i 's|#define LORA_SF.*|#define LORA_SF             ${{ inputs.lora_sf }}|' STM32/Core/Src/main.c
+          sed -i 's|#define LORA_BW_IDX.*|#define LORA_BW_IDX     ${{ inputs.lora_bw_idx }}|' STM32/Core/Src/main.c
+          sed -i 's|#define LORA_CR.*|#define LORA_CR             ${{ inputs.lora_cr }}|' STM32/Core/Src/main.c
           
           echo "Updated main.c from input:"
           grep "#define LORA_RX_FREQ" STM32/Core/Src/main.c
