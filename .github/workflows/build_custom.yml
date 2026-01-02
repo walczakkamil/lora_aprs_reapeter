@@ -1,0 +1,76 @@
+name: Build Custom APRS Firmware
+
+on:
+  workflow_dispatch:
+    inputs:
+      callsign:
+        description: 'Callsign (np. SP7FM-1)'
+        required: true
+        default: 'N0CALL-1'
+      rx_freq:
+        description: 'RX Frequency (Hz)'
+        required: true
+        default: '434855000'
+      tx_freq:
+        description: 'TX Frequency (Hz)'
+        required: true
+        default: '434955000'
+      coordinates:
+        description: 'GPS coordinates APRS (np. !5144.22N/01934.44E)'
+        required: true
+        default: '!5144.22N/01934.44E'
+      lora_sf:
+        description: 'Spreading Factor'
+        required: false
+        default: '9'
+      lora_bw_idx:
+        description: 'Signal Bandwidth'
+        required: false
+        default: '7'
+      lora_cr:
+        description: 'Coding Rate'
+        required: false
+        default: '3'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Install ARM GCC Toolchain
+        uses: xpack-dev-tools/arm-none-eabi-gcc-xpack@v1.1.1
+        with:
+            version: '13.2.1-1.1'
+
+      - name: Update Configuration (Apply User Inputs)
+        run: |
+          sed -i 's/#define LORA_RX_FREQ.*/#define LORA_RX_FREQ    ${{ inputs.rx_freq }}/' Core/Src/main.c
+          sed -i 's/#define LORA_TX_FREQ.*/#define LORA_TX_FREQ    ${{ inputs.tx_freq }}/' Core/Src/main.c
+          sed -i 's|#define APRS_CALLSIGN.*|#define APRS_CALLSIGN   "${{ inputs.callsign }}"|' Core/Src/main.c
+          sed -i 's|#define APRS_COORDS.*|#define APRS_COORDS     "${{ inputs.coordinates }}"|' Core/Src/main.c
+          sed -i 's|#define LORA_SF.*|#define LORA_SF     "${{ inputs.lora_sf }}"|' Core/Src/main.c
+          sed -i 's|#define LORA_BW_IDX.*|#define LORA_BW_IDX     "${{ inputs.lora_bw_idx }}"|' Core/Src/main.c
+          sed -i 's|#define LORA_CR.*|#define LORA_CR     "${{ inputs.lora_cr }}"|' Core/Src/main.c
+          
+          echo "Updated main.c from input:"
+          grep "#define LORA" Core/Src/main.c
+          grep "#define APRS" Core/Src/main.c
+
+      - name: Build Firmware
+        run: |
+          make -C Debug -j4 all
+
+      - name: Rename Binary
+        run: |
+          mv Debug/*.bin firmware_${{ inputs.callsign }}.bin
+          mv Debug/*.hex firmware_${{ inputs.callsign }}.hex
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Firmware-${{ inputs.callsign }}
+          path: |
+            firmware_${{ inputs.callsign }}.bin
+            firmware_${{ inputs.callsign }}.hex

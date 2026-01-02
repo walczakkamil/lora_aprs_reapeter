@@ -75,9 +75,11 @@ UART_HandleTypeDef huart1;
 #define LORA_RX_FREQ    434855000
 #define LORA_TX_FREQ    434955000
 #define LORA_SF         9
-#define LORA_BW_IDX     7         // 125 kHz
-#define LORA_CR         3         // 4/7
-#define TELEMETRY_INTERVAL 3600000 // 1h
+#define LORA_BW_IDX     7         		// 125 kHz
+#define LORA_CR         3         		// 4/7
+#define TELEMETRY_INTERVAL 3600000 		// 1h
+#define APRS_CALLSIGN   "SP7FM-1"
+#define APRS_COORDS     "!5144.22N/01934.44E"
 
 // --- SYSTEM ---
 #define QUEUE_SIZE 5
@@ -306,7 +308,8 @@ void SendTelemetry(void) {
     // 1. Nagłówek LoRa: < (0x3C), 0xFF, 0x01
     // 2. Nagłówek AX.25: Źródło>Cel,Ścieżka:
     // 3. Dane APRS: !Lat/Lon#Komentarz
-    sprintf(packet, "\x3c\xff\x01SP7FM-1>APRS,WIDE1-1:!5144.22N/01934.44E#SP7FM-1 BAT:%.2fV", voltage);
+    //sprintf(packet, "\x3c\xff\x01SP7FM-1>APRS,WIDE1-1:!5144.22N/01934.44E#SP7FM-1 BAT:%.2fV", voltage);
+    sprintf(packet, "\x3c\xff\x01%s>APRS,WIDE1-1:%s#%s BAT:%.2fV", APRS_CALLSIGN, APRS_COORDS, APRS_CALLSIGN, voltage);
 
     DebugPrint("TELEMETRY: %s\r\n", packet + 3); // +3 żeby nie wyświetlać krzaków w logu
     Queue_Push((uint8_t*)packet, strlen(packet)); // Wysyłamy całość (z krzakami)
