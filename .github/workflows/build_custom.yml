@@ -16,7 +16,7 @@ on:
         required: true
         default: '434955000'
       coordinates:
-        description: 'GPS coordinates APRS (np. !5144.22N/01934.44E)'
+        description: 'GPS coordinates APRS (def. !0100.00N/00100.00E)'
         required: true
         default: '!5144.22N/01934.44E'
       lora_sf:
