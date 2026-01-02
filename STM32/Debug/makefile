@@ -34,34 +34,34 @@ $(wildcard ../makefile.init) \
 $(wildcard ../makefile.targets) \
 
 
-BUILD_ARTIFACT_NAME := Lora_RX_gemini
+BUILD_ARTIFACT_NAME := Lora_APRS_repeater
 BUILD_ARTIFACT_EXTENSION := elf
 BUILD_ARTIFACT_PREFIX :=
 BUILD_ARTIFACT := $(BUILD_ARTIFACT_PREFIX)$(BUILD_ARTIFACT_NAME)$(if $(BUILD_ARTIFACT_EXTENSION),.$(BUILD_ARTIFACT_EXTENSION),)
 
 # Add inputs and outputs from these tool invocations to the build variables 
 EXECUTABLES += \
-Lora_RX_gemini.elf \
+Lora_APRS_repeater.elf \
 
 MAP_FILES += \
-Lora_RX_gemini.map \
+Lora_APRS_repeater.map \
 
 SIZE_OUTPUT += \
 default.size.stdout \
 
 OBJDUMP_LIST += \
-Lora_RX_gemini.list \
+Lora_APRS_repeater.list \
 
 
 # All Target
 all: main-build
 
 # Main-build Target
-main-build: Lora_RX_gemini.elf secondary-outputs
+main-build: Lora_APRS_repeater.elf secondary-outputs
 
 # Tool invocations
-Lora_RX_gemini.elf Lora_RX_gemini.map: $(OBJS) $(USER_OBJS) C:\Users\walcz\OneDrive\Documents\stm32\Lora_RX_gemini\STM32F103C8TX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
-	arm-none-eabi-gcc -o "Lora_RX_gemini.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m3 -T"C:\Users\walcz\OneDrive\Documents\stm32\Lora_RX_gemini\STM32F103C8TX_FLASH.ld" --specs=nosys.specs -Wl,-Map="Lora_RX_gemini.map" -Wl,--gc-sections -static --specs=nano.specs -mfloat-abi=soft -mthumb -u _printf_float -Wl,--start-group -lc -lm -Wl,--end-group
+Lora_APRS_repeater.elf Lora_APRS_repeater.map: $(OBJS) $(USER_OBJS) C:\Users\walcz\OneDrive\Documents\stm32\Lora_RX_gemini\STM32F103C8TX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
+	arm-none-eabi-gcc -o "Lora_APRS_repeater.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m3 -T"C:\Users\walcz\OneDrive\Documents\stm32\Lora_RX_gemini\STM32F103C8TX_FLASH.ld" --specs=nosys.specs -Wl,-Map="Lora_APRS_repeater.map" -Wl,--gc-sections -static --specs=nano.specs -mfloat-abi=soft -mthumb -u _printf_float -Wl,--start-group -lc -lm -Wl,--end-group
 	@echo 'Finished building target: $@'
 	@echo ' '
 
@@ -70,14 +70,14 @@ default.size.stdout: $(EXECUTABLES) makefile objects.list $(OPTIONAL_TOOL_DEPS)
 	@echo 'Finished building: $@'
 	@echo ' '
 
-Lora_RX_gemini.list: $(EXECUTABLES) makefile objects.list $(OPTIONAL_TOOL_DEPS)
-	arm-none-eabi-objdump -h -S $(EXECUTABLES) > "Lora_RX_gemini.list"
+Lora_APRS_repeater.list: $(EXECUTABLES) makefile objects.list $(OPTIONAL_TOOL_DEPS)
+	arm-none-eabi-objdump -h -S $(EXECUTABLES) > "Lora_APRS_repeater.list"
 	@echo 'Finished building: $@'
 	@echo ' '
 
 # Other Targets
 clean:
-	-$(RM) Lora_RX_gemini.elf Lora_RX_gemini.list Lora_RX_gemini.map default.size.stdout
+	-$(RM) Lora_APRS_repeater.elf Lora_APRS_repeater.list Lora_APRS_repeater.map default.size.stdout
 	-@echo ' '
 
 secondary-outputs: $(SIZE_OUTPUT) $(OBJDUMP_LIST)
