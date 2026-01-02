@@ -109,5 +109,9 @@ Projekt przygotowany dla STM32CubeIDE / STM32CubeMX / STM32CubeProgrammer.
 * **Biblioteki:** HAL Driver
 * **Język:* C (C99/GNU11)
 
+## 🔗 Źródła
+
+* https://stm32-base.org/boards/STM32F103C8T6-Blue-Pill
+
 ---
 Projekt stworzony na potrzeby sieci LoRa APRS przez SP7FM.
