@@ -205,22 +205,35 @@ void LoRa_SetMode(LoRa_Module* mod, uint8_t mode) {
 }
 
 void LoRa_Send(LoRa_Module* mod, uint8_t* data, uint8_t len) {
+    // 1. Wybudzamy radio (przejście ze SLEEP do STDBY)
     LoRa_SetMode(mod, MODE_STDBY);
+
+    // !!! WAŻNE: Dajemy czas na ustabilizowanie się oscylatora (Warm-up)
+    // Bez tego zapis do FIFO może się nie udać zaraz po wybudzeniu.
+    HAL_Delay(2);
+
+    // 2. Wypełniamy bufor
     LoRa_WriteReg(mod, REG_FIFO_ADDR_PTR, 0);
     for(int i=0; i<len; i++) {
         LoRa_WriteReg(mod, REG_FIFO, data[i]);
     }
+
+    // 3. Rozpoczynamy nadawanie
     LoRa_WriteReg(mod, 0x22, len);
     LoRa_SetMode(mod, MODE_TX);
 
-    // Czekaj na koniec TX (Polling z IWDG)
+    // 4. Czekamy na koniec TX
     uint32_t start = HAL_GetTick();
     while((LoRa_ReadReg(mod, REG_IRQ_FLAGS) & 0x08) == 0) {
-        if(HAL_GetTick() - start > 2000) break; // Timeout
+        if(HAL_GetTick() - start > 2000) break;
         HAL_IWDG_Refresh(&hiwdg);
     }
+
+    // 5. Czyścimy flagi
     LoRa_WriteReg(mod, REG_IRQ_FLAGS, 0xFF);
-    LoRa_SetMode(mod, MODE_STDBY);
+
+    // 6. Idziemy spać zamiast czuwać (zmiana STDBY -> SLEEP)
+    LoRa_SetMode(mod, MODE_SLEEP);
 }
 
 uint8_t LoRa_Receive(LoRa_Module* mod, uint8_t* buffer) {
@@ -354,8 +367,8 @@ int main(void)
 
   // Inicjalizacja TX (434.955 MHz)
   LoRa_Init(&loraTX);
-  LoRa_SetMode(&loraTX, MODE_STDBY);
-  DebugPrint("SYS: TX Init OK\r\n");
+  LoRa_SetMode(&loraTX, MODE_SLEEP);
+  DebugPrint("SYS: TX Init OK (Sleeping)\r\n");
 
   // Led na start
   // LED ON (PC13 Low), delay, LED OFF (PC13 High)
