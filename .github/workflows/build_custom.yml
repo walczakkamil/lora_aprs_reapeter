@@ -47,6 +47,9 @@ jobs:
 
       - name: Update Configuration (Apply User Inputs)
         run: |
+          echo "Debug"
+          ls -all
+          pwd
           sed -i 's/#define LORA_RX_FREQ.*/#define LORA_RX_FREQ    ${{ inputs.rx_freq }}/' Core/Src/main.c
           sed -i 's/#define LORA_TX_FREQ.*/#define LORA_TX_FREQ    ${{ inputs.tx_freq }}/' Core/Src/main.c
           sed -i 's|#define APRS_CALLSIGN.*|#define APRS_CALLSIGN   "${{ inputs.callsign }}"|' Core/Src/main.c
