@@ -1,268 +1,117 @@
-# LoRa APRS Repeater (Dual SX1276)
+# STM32 LoRa APRS Repeater (Bluepill + 2x RFM96W)
 
 ## 📡 Project Overview
 
-This project implements a **LoRa APRS repeater** based on an **STM32 Blue Pill (STM32F103C8T6)** microcontroller and **two SX1276 / RFM96W LoRa radio modules**.
+A simple, energy-efficient **LoRa APRS Repeater** based on the STM32F103C8T6 microcontroller (Bluepill) and two RFM96W radio modules (SX1278). The device operates in "Cross-Band" mode (receives on one frequency, transmits on another) and features telemetry and watchdog functions.
 
-The device operates as a **simple digital repeater**:
-- **Radio 1 (RX)** receives APRS LoRa packets
-- **Radio 2 (TX-FWD)** forwards the received packet unchanged on another frequency
+## 🚀 Features and Capabilities
 
-The project is designed for **low power consumption**, **high reliability**, and **simple firmware architecture** without an RTOS.
+* **Dual Radio:** Independent modules for RX (receiving) and TX (transmitting).
+* **Continuous Listening (RX Continuous):** You won't miss any frames.
+* **Buffering (Queue):** FIFO queue for 5 packets – prevents data loss when multiple frames arrive simultaneously.
+* **Transparency:** Forwards raw LoRa frames (including `3C FF 01` headers), making it compatible with most trackers and iGates.
+* **Telemetry:** Automatic status transmission every 1h (MCU supply voltage + station coordinates).
+* **Energy Saving:** Processor enters `SLEEP` mode (WFI) when idle (wakes up on radio interrupt).
+* **Watchdog (IWDG):** Automatic reset in case of system hang.
+* **Debug Mode:** Live view of received and transmitted frames via UART when the service jumper is shorted.
 
----
+## ⚙️ Radio Parameters (LoRa)
 
-## 🧱 Hardware Used
+Settings are identical for RX and TX (except for frequency):
 
-### Microcontroller Board
-- **STM32 Blue Pill**
-- MCU: **STM32F103C8T6**
-- Core: ARM Cortex-M3 @ 72 MHz
-- Flash: 64 KB
-- RAM: 20 KB
-- Operating voltage: 3.3 V
+| Parameter | Value |
+| :--- | :--- |
+| **RX Frequency** | `434.855 MHz` |
+| **TX Frequency** | `434.955 MHz` |
+| **Spreading Factor (SF)** | `9` |
+| **Bandwidth (BW)** | `125 kHz` |
+| **Coding Rate (CR)** | `4/7` |
+| **Tx Power** | `Max (0xFF)` |
 
-### Radio Modules
-- **2 × SX1276 / RFM96W (LoRa)**
-- Frequency band: **433 MHz**
-- Interface: **SPI**
-- Modulation: **LoRa**
-- Used for **APRS over LoRa**
+## 🔌 Wiring Diagram (Pinout)
 
----
+The device uses the **SPI1** bus shared by both radio modules.
 
-## 📻 Radio Configuration
+### Module 1: Receiver (RX - 434.855 MHz)
+| RFM96W Pin | STM32 Pin (Bluepill) | Notes |
+| :--- | :--- | :--- |
+| MISO | **PA6** | Shared SPI |
+| MOSI | **PA7** | Shared SPI |
+| SCK | **PA5** | Shared SPI |
+| NSS (CS) | **PA4** | Chip Select |
+| RST | **PB0** | Reset |
+| DIO0 | **PB1** | Interrupt (EXTI) |
+| 3.3V | 3.3V | |
+| GND | GND | |
 
-Both radios use identical LoRa parameters, except for frequency:
+### Module 2: Transmitter (TX - 434.955 MHz)
+| RFM96W Pin | STM32 Pin (Bluepill) | Notes |
+| :--- | :--- | :--- |
+| MISO | **PA6** | Shared SPI |
+| MOSI | **PA7** | Shared SPI |
+| SCK | **PA5** | Shared SPI |
+| NSS (CS) | **PA3** | Chip Select |
+| RST | **PB10** | Reset |
+| DIO0 | *(NC)* | Not Connected (TX Blocking) |
+| 3.3V | 3.3V | |
+| GND | GND | |
 
-| Parameter            | Value              |
-|----------------------|--------------------|
-| Modulation           | LoRa               |
-| Bandwidth            | 125 kHz            |
-| Spreading Factor     | SF9                |
-| Coding Rate          | 4/7                |
-| Sync Word            | 0x12 (private)     |
-| CRC                  | Enabled            |
-| Preamble Length      | 8 symbols          |
-| Mode                 | Continuous RX / TX |
+### Other
+| Function | STM32 Pin | Description |
+| :--- | :--- | :--- |
+| **DEBUG UART TX** | **PA9** | Logs (Baud: 115200) |
+| **DEBUG SWITCH** | **PB12** | Short to GND enables logs |
+| **LED STATUS** | **PC13** | Blinks on transmission (Built-in) |
 
-### Frequencies
-- **Radio 1 (RX):** 434.855 MHz  
-- **Radio 2 (TX-FWD):** 434.955 MHz  
+## 📡 Telemetry
 
----
-
-## 🔁 Operating Principle
-
-1. Radio 1 stays in **continuous receive mode**
-2. When a valid LoRa packet is received:
-   - Payload is read from FIFO
-   - Packet metadata (RSSI, SNR) is logged via UART
-3. The same payload is immediately transmitted by Radio 2
-4. After transmission:
-   - Radio 2 returns to sleep
-   - Radio 1 continues listening
-
-> Radio 2 does **not** receive packets – this reduces power consumption and prevents feedback loops.
-
----
-
-## 🔌 Pin Connections
-
-### SPI (shared by both radios)
-
-| STM32 Pin | Function |
-|----------|----------|
-| PA5      | SPI1_SCK |
-| PA6      | SPI1_MISO|
-| PA7      | SPI1_MOSI|
-
----
-
-### Radio 1 (RX)
-
-| SX1276 Pin | STM32 Pin | Description |
-|-----------|-----------|-------------|
-| NSS       | PA4       | SPI CS      |
-| RESET     | PB0       | Reset       |
-| DIO0      | PB1       | RX Done IRQ |
-| VCC       | 3.3V      | Power       |
-| GND       | GND       | Ground      |
-
----
-
-### Radio 2 (TX-FWD)
-
-| SX1276 Pin | STM32 Pin | Description |
-|-----------|-----------|-------------|
-| NSS       | PA3       | SPI CS      |
-| RESET     | PB10      | Reset       |
-| DIO0      | *unused*  | Not needed  |
-| VCC       | 3.3V      | Power       |
-| GND       | GND       | Ground      |
-
-> `DIO0` is intentionally **not connected** for Radio 2, as only transmission is required.
-
----
-
-## 🧠 Firmware Architecture
-
-- Bare-metal firmware using **STM32 HAL**
-- No RTOS
-- Single main loop
-- Interrupt-driven RX (DIO0 on Radio 1)
-- Blocking TX on Radio 2
-- UART used for debugging and packet dump
-
----
-
-## 🧾 UART Debug Output
-
-- Packet length
-- RSSI (dBm)
-- SNR (dB)
-- Payload dump:
-  - HEX
-  - ASCII (printable characters)
-- Debug mode
-  - A9 RX - TX UART
-  - A10 TX - RX UART
-  - GNG - GND UART
-  - B12 - GND - debug enabler
-
-Example:
-```
-R1 RX DONE: len=56 RSSI=-28 dBm SNR=11.5 dB
-R1 HEX: 3C FF 01 02 ...
-R1 ASCII: <..APRS....>
-R2 TX: forwarding 40 bytes
+The repeater identifies itself with the callsign: `SP7FM-1`.
+Telemetry frame format (sent every 1 hour):
+```text
+!5144.22N/01934.44E#SP7FM-1 BAT:x.xxV
 ```
 
----
+* **Coordinates:** 51.737N, 19.574E (encoded in NMEA format).
 
-## 🔒 Reliability & Safety
+* **Voltage:** Internal reference voltage (VREFINT) reading converted to supply voltage (VDDA).
 
-- Hardware reset of both radios at startup
-- Watchdog-friendly structure
-- Optional **panic reset** using `NVIC_SystemReset()` in case of unrecoverable errors
-- No dynamic memory allocation
+## 🛠️ Debugging
 
----
+To view device operation:
 
-## ⚡ Power Considerations
+* Connect a USB-UART converter to pins PA9 (RX converter) and GND.
 
-- Radio 2 stays in **sleep mode** when idle
-- No reception on TX radio
-- Suitable for battery or solar-powered installations
+* Short pin PB12 to ground (GND).
+
+* Open a terminal (e.g., PuTTY, RealTerm) with a baud rate of 115200 bps.
+
+Example logs:
+```text
+SYS: Booting...
+SYS: RX Init OK
+SYS: TX Init OK
+RX: Recv 89 bytes
+RX CONTENT (TXT): <▒SP7FM-10>APLRG1...
+QUEUE: Added packet (89 B)
+TX: Preparing to send...
+APRS CONTENT: <▒SP7FM-10>APLRG1...
+TX: Done.
+```
+If pin PB12 is open (High state - PullUp), the repeater operates "silently" on UART, saving processor time.
+
+## ⚠️ Important Notes
+
+* **Antennas:** Never power up the TX module without an antenna connected! This risks damaging the RFM96 chip.
+* **Power Supply:** Ensure the 3.3V source has sufficient current capability (LoRa transmission can draw >100mA).
+* **Separation:** Due to the close frequencies (100kHz spacing), physical separation of RX and TX antennas is recommended to prevent the transmitter from desensitizing the receiver, or use bandpass filters/duplexer.
 
 
----
+## 📝 Compilation
+Project prepared for STM32CubeIDE / STM32CubeMX / STM32CubeProgrammer.
 
-# 📡 LoRa APRS Repeater – Radio State Flow
-
-This document describes the **runtime flow and radio state management** used in the LoRa APRS Repeater project based on **STM32 (BluePill) + SX127x**.
-
-The design uses **two LoRa radios**:
-
-- 📥 **RX1 (RID_RX1)** – continuous receiver (LoRa APRS RX)
-- 📤 **TX / RX2 (RID_RX2)** – transmitter only (forwarding + telemetry)
-
-The main goals are:
-- 🔄 continuous reception on RX1,
-- 🔋 very low power consumption on TX/RX2,
-- 📊 periodic APRS telemetry transmission (VDD) every 1 hour,
-- 🚀 immediate forwarding of received APRS frames.
-
----
-
-## ⚙️ Radio Modes Overview
-
-| Mode | Description | Typical Current | Notes |
-|---|---|---|---|
-| 💤 `MODE_SLEEP` | Deep sleep | ~µA | Oscillator off, registers lost |
-| ⏸️ `MODE_STDBY` | Standby / ready | ~mA | Fast TX/RX start, registers kept |
-| 📡 `MODE_RX_CONTINUOUS` | Continuous receive | ~10–12 mA | RX active |
-| 📶 `MODE_TX` | Transmit | up to 120 mA | Depends on power level |
+* **MCU:** STM32F103C8Tx
+* **Libraries:** HAL Driver
+* **Language:** C (C99/GNU11)
 
 ---
-
-## 🔁 Runtime Flow – State Table
-
-### 🗂️ Legend
-- **RX1** = RID_RX1 (receiver radio)
-- **TX/RX2** = RID_RX2 (transmit-only radio)
-
-| Step | Trigger | RX1 (RID_RX1) | TX / RX2 (RID_RX2) | Code Activity | Purpose |
-|---|---|---|---|---|---|
-| 0️⃣ | MCU reset | Not configured | Not configured | HAL init, UART, SPI, ADC init, SX127x reset, REG_VERSION check | 🟢 System startup |
-| 1️⃣ | LoRa configuration | Configured → 📡 RX_CONTINUOUS | Configured → 💤 SLEEP | `RADIO_RX_LoRaInit()` + `RADIO_RX_StartContinuous()` | RX1 starts listening, TX sleeps |
-| 2️⃣ | Startup telemetry | 📡 RX_CONTINUOUS | 💤 → ⏸️ → 📶 → 💤 | `TELEMETRY_SendVddOnce()` | 📊 Immediate VDD telemetry after boot |
-| 3️⃣ | Normal operation | 📡 RX_CONTINUOUS | 💤 SLEEP | Main loop polling RX1, checking telemetry timer | 🔋 Idle / low power |
-| 4️⃣ | Packet received | 📡 RX IRQ | 💤 SLEEP | RX1 FIFO read, packet buffered, `g_tx_pending_2 = 1` | 📥 Prepare forwarding |
-| 5️⃣ | Packet forward | TX pending flag | 📡 RX_CONTINUOUS | 💤 → ⏸️ → 📶 → 💤 | `RADIO_TX_Send()` forwards APRS frame | 🚀 Forward packet |
-| 6️⃣ | Periodic telemetry | ⏱️ 1h timer | 📡 RX_CONTINUOUS | 💤 → ⏸️ → 📶 → 💤 | APRS telemetry `T#...` frame | 📈 VDD history |
-| 7️⃣ | Fault recovery | Error threshold | n/a | n/a | Panic reset (`NVIC_SystemReset`) | 🔁 Self-recovery |
-
----
-
-## ✅ Why `MODE_SLEEP` After TX Is Correct Here
-
-Using 💤 `MODE_SLEEP` at the end of `RADIO_TX_Send()` is **intentional and correct** because:
-
-- 📤 TX/RX2 **does not perform reception**
-- ⏳ The next TX happens **minutes or hours later**
-- 🔋 Standby current would unnecessarily drain a solar-powered node
-- 🔄 Radio configuration is fully re-initialized before each TX
-
-This makes 💤 `MODE_SLEEP` the **most power-efficient choice** for this architecture.
-
----
-
-## ⚠️ Important Rule
-
-> After exiting 💤 `MODE_SLEEP`, **LoRa configuration must be fully re-applied**.
-
-This project already follows this rule.
-
----
-
-## 🧾 Summary
-
-- 📥 RX1 stays in `MODE_RX_CONTINUOUS`
-- 💤 TX/RX2 sleeps almost all the time
-- 📶 TX wakes up only to forward packets or send telemetry
-- 📊 Telemetry is sent:
-  - immediately after boot
-  - then every **1 hour**
-- 🔋 Power consumption is minimized without losing functionality
-
----
-
-This flow is optimized for **solar-powered LoRa APRS infrastructure nodes** such as digipeaters or repeaters.
-
----
-
-## 🚀 Future Improvements
-
-- APRS payload parsing (position, telemetry)
-- Smart digipeater logic
-- Packet filtering
-- EEPROM / Flash configuration storage
-- CAD-based reception
-- FreeRTOS support (optional)
-
-
----
-
-## 📜 License
-
-This project is provided for **educational and amateur radio use**.  
-Use it responsibly and according to your local radio regulations.
-
-
-## 👤 Author 
-
-SP7FM @ Kamil
-
-LoRa APRS Repeater  
-Built with ❤️ for amateur radio experimentation
+Project created for the LoRa APRS network by SP7FM.
