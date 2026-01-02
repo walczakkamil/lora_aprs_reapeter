@@ -76,13 +76,12 @@ jobs:
 
       - name: Rename Binary
         run: |
-          mv STM32/Debug/*.bin firmware_${{ inputs.callsign }}.bin
-          mv STM32/Debug/*.hex firmware_${{ inputs.callsign }}.hex
+          mv STM32/Debug/Lora_RX_gemini.elf firmware_${{ inputs.callsign }}.elf
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: Firmware-${{ inputs.callsign }}
           path: |
-            firmware_${{ inputs.callsign }}.bin
-            firmware_${{ inputs.callsign }}.hex
+            firmware_${{ inputs.callsign }}.elf
+
