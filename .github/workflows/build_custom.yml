@@ -40,9 +40,9 @@ jobs:
         uses: actions/checkout@v3
 
       - name: Install ARM GCC Toolchain
-        uses: xpack-dev-tools/setup-arm-none-eabi-gcc@v1
+        uses: stm32duino/setup-stm32-arm-none-eabi-gcc@v1
         with:
-          release: '13.2.1-1.1'
+          version: '12.3.rel1'
 
       - name: Update Configuration (Apply User Inputs)
         run: |
