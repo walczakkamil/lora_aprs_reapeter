@@ -64,6 +64,12 @@ jobs:
           grep "#define LORA_BW_IDX" STM32/Core/Src/main.c
           grep "#define LORA_CR" STM32/Core/Src/main.c
 
+      - name: Fix Makefile Absolute Paths
+        run: |
+          sed -i 's|C:.*STM32F103C8TX_FLASH.ld|../STM32F103C8TX_FLASH.ld|g' STM32/Debug/makefile
+          echo "Makefile path to linker: "
+          grep "STM32F103C8TX_FLASH.ld" STM32/Debug/makefile
+
       - name: Build Firmware
         run: |
           make -C STM32/Debug -j4 all
