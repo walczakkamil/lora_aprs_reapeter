@@ -10,9 +10,11 @@ Prosty, energooszczędny **Repeter LoRa APRS** oparty na mikrokontrolerze STM32F
 * **Ciągły nasłuch (RX Continuous):** Nie przegapisz żadnej ramki.
 * **Buforowanie (Kolejka):** Kolejka FIFO na 5 pakietów – zapobiega utracie danych, gdy przychodzi wiele ramek naraz.
 * **Transparentność:** Przekazuje surowe ramki LoRa (włącznie z nagłówkami `3C FF 01`), dzięki czemu jest kompatybilny z większością trackerów i bramek iGate.
-* **Telemetria:** Automatyczne wysyłanie statusu co 1h (Napięcie zasilania MCU + współrzędne stacji).
-* **Oszczędzanie energii:** Procesor wchodzi w tryb `SLEEP` (WFI), gdy nie przetwarza danych (wybudzanie przerwaniem od radia).
-* **Watchdog (IWDG):** Automatyczny reset w przypadku zawieszenia systemu.
+* **Inteligentny Watchdog (IWDG):** System automatycznego resetu w przypadku zawieszenia procesora.
+* **Sanity Check Radia:** Autorski mechanizm monitorowania stanu modułów radiowych. W przypadku wykrycia zawieszenia nadajnika (np. przez błędy SPI lub Brown-out), system automatycznie wykonuje twardy reset modułu RF.
+* **Licznik Resetów (R_CNT):** Statystyka resetów (Watchdog/Radio) przechowywana w rejestrach Backup (BKP), która przetrwa reset urządzenia, a zeruje się tylko przy całkowitym zaniku zasilania.
+* **Energooszczędność:** Procesor przechodzi w tryb `SLEEP` (WFI), gdy nie przetwarza danych.
+* **Telemetria:** Automatyczne wysyłanie statusu stacji co 1h (napięcie zasilania, koordynaty, licznik resetów).
 * **Tryb Debug:** Podgląd na żywo odbieranych i wysyłanych ramek przez UART po zwarciu zworki serwisowej.
 
 ## ⚙️ Parametry Radiowe (LoRa)
@@ -65,15 +67,15 @@ Urządzenie wykorzystuje magistralę **SPI1** współdzieloną przez oba moduły
 
 ## 📡 Telemetria
 
-Repeter przedstawia się znakiem: `SP7FM-1`.
+Repeter przedstawia się znakiem: `NOCALL-1` (domyślnie).
+Domyślne koordynaty (Null Island/Test): `!0100.00N/00100.00E`.
 Format ramki telemetrycznej (wysyłanej co 1 godzinę):
 ```text
-!5144.22N/01934.44E#SP7FM-1 BAT:x.xxV
+!0100.00N/00100.00E#NOCALL-1 BAT:3.42V R_CNT:0
 ```
-
 * **Współrzędne:** 51.737N, 19.574E (zakodowane w formacie NMEA).
-
 * **Napięcie:** Odczyt wewnętrznego napięcia odniesienia (VREFINT) przeliczony na napięcie zasilania (VDDA).
+* **R_CNT:** Licznik resetów odczytany z domeny Backup (BKP_DR1).
 
 ## 🛠️ Debugowanie
 

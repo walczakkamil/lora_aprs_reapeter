@@ -7,13 +7,15 @@ A simple, energy-efficient **LoRa APRS Repeater** based on the STM32F103C8T6 mic
 ## 🚀 Features and Capabilities
 
 * **Dual Radio:** Independent modules for RX (receiving) and TX (transmitting).
-* **Continuous Listening (RX Continuous):** You won't miss any frames.
+* **Continuous Listening (RX Continuous):** Ensures no frames are missed.
 * **Buffering (Queue):** FIFO queue for 5 packets – prevents data loss when multiple frames arrive simultaneously.
-* **Transparency:** Forwards raw LoRa frames (including `3C FF 01` headers), making it compatible with most trackers and iGates.
-* **Telemetry:** Automatic status transmission every 1h (MCU supply voltage + station coordinates).
-* **Energy Saving:** Processor enters `SLEEP` mode (WFI) when idle (wakes up on radio interrupt).
-* **Watchdog (IWDG):** Automatic reset in case of system hang.
-* **Debug Mode:** Live view of received and transmitted frames via UART when the service jumper is shorted.
+* **Transparency:** Forwards raw LoRa frames (including 3C FF 01 headers), ensuring compatibility with most trackers and iGates.
+* **Intelligent Watchdog (IWDG):** Automatic reset system in case of CPU hang-up.
+* **Radio Sanity Check:** Custom mechanism for monitoring the status of radio modules. If a transmitter hang-up is detected (e.g., due to SPI errors or Brown-out), the system automatically performs a hard reset of the RF module.
+* **Reset Counter (R_CNT):** Statistics for resets (Watchdog/Radio) stored in Backup registers (BKP); these persist through device resets and only clear upon a total power loss.
+* **Energy Efficiency:** The processor enters SLEEP mode (WFI) when idle.
+* **Telemetry:** Automatic station status transmission every 1 hour (supply voltage, coordinates, and reset counter).
+* **Debug Mode:** Real-time monitoring of received and transmitted frames via UART when the service jumper is shorted.
 
 ## ⚙️ Radio Parameters (LoRa)
 
@@ -65,24 +67,21 @@ The device uses the **SPI1** bus shared by both radio modules.
 
 ## 📡 Telemetry
 
-The repeater identifies itself with the callsign: `SP7FM-1`.
+The repeater identifies itself with the callsign: `NOCALL-1` (default).
+Default coordinates (Null Island/Test): `!0100.00N/00100.00E`.
 Telemetry frame format (sent every 1 hour):
 ```text
-!5144.22N/01934.44E#SP7FM-1 BAT:x.xxV
+!0100.00N/00100.00E#NOCALL-1 BAT:3.42V R_CNT:0
 ```
-
 * **Coordinates:** 51.737N, 19.574E (encoded in NMEA format).
-
 * **Voltage:** Internal reference voltage (VREFINT) reading converted to supply voltage (VDDA).
+* **R_CNT:** Reset counter from Backup Domain (BKP_DR1).
 
 ## 🛠️ Debugging
 
 To view device operation:
-
 * Connect a USB-UART converter to pins PA9 (RX converter) and GND.
-
 * Short pin PB12 to ground (GND).
-
 * Open a terminal (e.g., PuTTY, RealTerm) with a baud rate of 115200 bps.
 
 Example logs:
