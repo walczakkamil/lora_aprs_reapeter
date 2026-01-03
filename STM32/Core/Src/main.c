@@ -47,6 +47,8 @@ ADC_HandleTypeDef hadc1;
 
 IWDG_HandleTypeDef hiwdg;
 
+RTC_HandleTypeDef hrtc;
+
 SPI_HandleTypeDef hspi1;
 
 UART_HandleTypeDef huart1;
@@ -90,6 +92,7 @@ typedef struct {
     uint8_t len;
 } LoRaPacket;
 
+uint16_t tx_reset_counter = 0;
 LoRaPacket txQueue[QUEUE_SIZE];
 uint8_t queueHead = 0;
 uint8_t queueTail = 0;
@@ -118,6 +121,7 @@ static void MX_SPI1_Init(void);
 static void MX_USART1_UART_Init(void);
 static void MX_ADC1_Init(void);
 static void MX_IWDG_Init(void);
+static void MX_RTC_Init(void);
 /* USER CODE BEGIN PFP */
 void LoRa_Init(LoRa_Module* mod);
 void LoRa_SetMode(LoRa_Module* mod, uint8_t mode);
@@ -228,7 +232,6 @@ void LoRa_Send(LoRa_Module* mod, uint8_t* data, uint8_t len) {
     uint32_t start = HAL_GetTick();
     while((LoRa_ReadReg(mod, REG_IRQ_FLAGS) & 0x08) == 0) {
         if(HAL_GetTick() - start > 2000) break;
-        HAL_IWDG_Refresh(&hiwdg);
     }
 
     // 5. Czyścimy flagi
@@ -308,7 +311,8 @@ void SendTelemetry(void) {
     // 1. Nagłówek LoRa: < (0x3C), 0xFF, 0x01
     // 2. Nagłówek AX.25: Źródło>Cel,Ścieżka:
     // 3. Dane APRS: !Lat/Lon#Komentarz
-    sprintf(packet, "\x3c\xff\x01%s>APRS,WIDE1-1:%s#%s BAT:%.2fV", APRS_CALLSIGN, APRS_COORDS, APRS_CALLSIGN, voltage);
+    // 4. TX reset counter
+    sprintf(packet, "\x3c\xff\x01%s>APRS,WIDE1-1:%s#%s BAT:%.2fV R_CNT:%u", APRS_CALLSIGN, APRS_COORDS, APRS_CALLSIGN, voltage, tx_reset_counter);
 
     DebugPrint("TELEMETRY: %s\r\n", packet + 3); // +3 żeby nie wyświetlać krzaków w logu
     Queue_Push((uint8_t*)packet, strlen(packet)); // Wysyłamy całość (z krzakami)
@@ -319,6 +323,41 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
     if(GPIO_Pin == GPIO_PIN_1) {
         packetReceivedFlag = 1;
     }
+}
+
+// Sprawdzenie czy radio żyje
+uint8_t LoRa_IsAlive(LoRa_Module* mod) {
+    // Odczytujemy rejestr wersji (zawsze powinien zwracać 0x12 dla SX127x)
+    uint8_t version = LoRa_ReadReg(mod, 0x42);
+
+    // Dodatkowo sprawdzamy, czy rejestr trybu nie zawiera niemożliwych wartości
+    uint8_t mode = LoRa_ReadReg(mod, 0x01);
+
+    if (version == 0x12 && mode != 0xFF) {
+        return 1; // Radio żyje
+    }
+    return 0; // Radio nie odpowiada lub magistrala SPI "wisi"
+}
+
+// Funkcja do odczytu i inkrementacji licznika
+void Update_Reset_Counter(void) {
+    // 1. Włącz zasilanie modułu PWR i dostęp do rejestrów BKP
+    __HAL_RCC_PWR_CLK_ENABLE();
+    __HAL_RCC_BKP_CLK_ENABLE();
+    HAL_PWR_EnableBkUpAccess();
+
+    // 2. Odczytaj wartość z rejestru 1 (możesz użyć DR1 do DR10)
+    // Rejestry BKP przechowują wartości 16-bitowe
+    tx_reset_counter = HAL_RTCEx_BKUPRead(&hrtc, RTC_BKP_DR1);
+
+    // 3. Jeśli to był reset od Watchdoga (IWDG), zwiększ licznik
+    if (__HAL_RCC_GET_FLAG(RCC_FLAG_IWDGRST)) {
+        tx_reset_counter++;
+        HAL_RTCEx_BKUPWrite(&hrtc, RTC_BKP_DR1, tx_reset_counter);
+    }
+
+    // 4. Wyczyść flagi resetu, aby przy następnym uruchomieniu wiedzieć, co go wywołało
+    __HAL_RCC_CLEAR_RESET_FLAGS();
 }
 
 /* USER CODE END 0 */
@@ -356,6 +395,7 @@ int main(void)
   MX_USART1_UART_Init();
   MX_ADC1_Init();
   MX_IWDG_Init();
+  MX_RTC_Init();
   /* USER CODE BEGIN 2 */
 
   DebugPrint("SYS: Booting...\r\n");
@@ -428,6 +468,22 @@ int main(void)
 		// Restart RX Continuous
 		LoRa_SetMode(&loraRX, MODE_RX_CONTINUOUS);
 	}
+
+    // Test radia TX - czy żyje
+    if (!LoRa_IsAlive(&loraTX)) {
+    	tx_reset_counter++;
+        DebugPrint("SYS: TX Radio failure detected! Re-initializing...\r\n");
+
+        // Twardy reset pinem RST tylko dla modułu TX
+        HAL_GPIO_WritePin(GPIOB, TX_RST_Pin, GPIO_PIN_RESET);
+        HAL_Delay(10);
+        HAL_GPIO_WritePin(GPIOB, TX_RST_Pin, GPIO_PIN_SET);
+        HAL_Delay(10);
+
+        // Ponowna inicjalizacja rejestrów
+        LoRa_Init(&loraTX);
+        LoRa_SetMode(&loraTX, MODE_SLEEP);
+    }
 
     // 3. Obsługa nadawania
     if(queueHead != queueTail) {
@@ -522,7 +578,8 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
-  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_ADC;
+  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_RTC|RCC_PERIPHCLK_ADC;
+  PeriphClkInit.RTCClockSelection = RCC_RTCCLKSOURCE_LSI;
   PeriphClkInit.AdcClockSelection = RCC_ADCPCLK2_DIV2;
   if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
   {
@@ -602,6 +659,37 @@ static void MX_IWDG_Init(void)
   /* USER CODE BEGIN IWDG_Init 2 */
 
   /* USER CODE END IWDG_Init 2 */
+
+}
+
+/**
+  * @brief RTC Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_RTC_Init(void)
+{
+
+  /* USER CODE BEGIN RTC_Init 0 */
+
+  /* USER CODE END RTC_Init 0 */
+
+  /* USER CODE BEGIN RTC_Init 1 */
+
+  /* USER CODE END RTC_Init 1 */
+
+  /** Initialize RTC Only
+  */
+  hrtc.Instance = RTC;
+  hrtc.Init.AsynchPrediv = RTC_AUTO_1_SECOND;
+  hrtc.Init.OutPut = RTC_OUTPUTSOURCE_ALARM;
+  if (HAL_RTC_Init(&hrtc) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN RTC_Init 2 */
+
+  /* USER CODE END RTC_Init 2 */
 
 }
 
