@@ -125,7 +125,7 @@ static void MX_RTC_Init(void);
 /* USER CODE BEGIN PFP */
 void LoRa_Init(LoRa_Module* mod);
 void LoRa_SetMode(LoRa_Module* mod, uint8_t mode);
-void LoRa_Send(LoRa_Module* mod, uint8_t* data, uint8_t len);
+uint8_t LoRa_Send(LoRa_Module* mod, uint8_t* data, uint8_t len);
 uint8_t LoRa_Receive(LoRa_Module* mod, uint8_t* buffer);
 void Queue_Push(uint8_t* data, uint8_t len);
 int Queue_Pop(uint8_t* buffer);
@@ -210,7 +210,7 @@ void LoRa_SetMode(LoRa_Module* mod, uint8_t mode) {
     LoRa_WriteReg(mod, REG_OP_MODE, MODE_LONG_RANGE_MODE | mode);
 }
 
-void LoRa_Send(LoRa_Module* mod, uint8_t* data, uint8_t len) {
+uint8_t LoRa_Send(LoRa_Module* mod, uint8_t* data, uint8_t len) {
     // 1. Wybudzamy radio (przejście ze SLEEP do STDBY)
     LoRa_SetMode(mod, MODE_STDBY);
 
@@ -230,15 +230,21 @@ void LoRa_Send(LoRa_Module* mod, uint8_t* data, uint8_t len) {
 
     // 4. Czekamy na koniec TX
     uint32_t start = HAL_GetTick();
-    while((LoRa_ReadReg(mod, REG_IRQ_FLAGS) & 0x08) == 0) {
-        if(HAL_GetTick() - start > 2000) break;
-    }
+    uint8_t tx_success = 0;
+    while(HAL_GetTick() - start < 2000) { // Timeout 2 sekundy
+    	if(LoRa_ReadReg(mod, REG_IRQ_FLAGS) & 0x08) {
+    		tx_success = 1; // Znaleziono flagę TxDone!
+    		break;
+		}
+	}
 
     // 5. Czyścimy flagi
     LoRa_WriteReg(mod, REG_IRQ_FLAGS, 0xFF);
 
     // 6. Idziemy spać zamiast czuwać (zmiana STDBY -> SLEEP)
     LoRa_SetMode(mod, MODE_SLEEP);
+
+    return tx_success; // Zwracamy wynik
 }
 
 uint8_t LoRa_Receive(LoRa_Module* mod, uint8_t* buffer) {
@@ -511,7 +517,14 @@ int main(void)
 			// LED ON (PC13 Low)
 			HAL_GPIO_WritePin(LED_PORT, LED_PIN, GPIO_PIN_RESET);
 
-			LoRa_Send(&loraTX, txBuffer, len);
+			//LoRa_Send(&loraTX, txBuffer, len);
+			if (LoRa_Send(&loraTX, txBuffer, len)) {
+			    DebugPrint("TX: Success\r\n");
+			} else {
+			    DebugPrint("TX: FAILED! Re-queuing...\r\n");
+			    tx_reset_counter++;
+			    Queue_Push(txBuffer, len);
+			}
 
 			// LED OFF (PC13 High)
 			HAL_GPIO_WritePin(LED_PORT, LED_PIN, GPIO_PIN_SET);
