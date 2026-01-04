@@ -90,6 +90,7 @@ UART_HandleTypeDef huart1;
 typedef struct {
     uint8_t data[MAX_PKT_LEN];
     uint8_t len;
+    uint8_t tx_counter;
 } LoRaPacket;
 
 uint16_t tx_reset_counter = 0;
@@ -127,8 +128,8 @@ void LoRa_Init(LoRa_Module* mod);
 void LoRa_SetMode(LoRa_Module* mod, uint8_t mode);
 uint8_t LoRa_Send(LoRa_Module* mod, uint8_t* data, uint8_t len);
 uint8_t LoRa_Receive(LoRa_Module* mod, uint8_t* buffer);
-void Queue_Push(uint8_t* data, uint8_t len);
-int Queue_Pop(uint8_t* buffer);
+void Queue_Push(uint8_t* data, uint8_t len, uint8_t tx_counter);
+int Queue_Pop(uint8_t* buffer, uint8_t* out_tx_counter);
 void SendTelemetry(void);
 void DebugPrint(const char *format, ...);
 float GetInternalVoltage(void);
@@ -231,6 +232,9 @@ uint8_t LoRa_Send(LoRa_Module* mod, uint8_t* data, uint8_t len) {
     // 4. Czekamy na koniec TX
     uint32_t start = HAL_GetTick();
     uint8_t tx_success = 0;
+//    while((LoRa_ReadReg(mod, REG_IRQ_FLAGS) & 0x08) == 0) {
+//        if(HAL_GetTick() - start > 2000) break;
+//    }
     while(HAL_GetTick() - start < 2000) { // Timeout 2 sekundy
     	if(LoRa_ReadReg(mod, REG_IRQ_FLAGS) & 0x08) {
     		tx_success = 1; // Znaleziono flagę TxDone!
@@ -277,11 +281,12 @@ void DebugPrint(const char *format, ...) {
     }
 }
 
-void Queue_Push(uint8_t* data, uint8_t len) {
+void Queue_Push(uint8_t* data, uint8_t len, uint8_t tx_counter) {
     uint8_t nextHead = (queueHead + 1) % QUEUE_SIZE;
     if(nextHead != queueTail) {
         memcpy(txQueue[queueHead].data, data, len);
         txQueue[queueHead].len = len;
+        txQueue[queueHead].tx_counter = tx_counter;
         queueHead = nextHead;
         DebugPrint("QUEUE: Dodano pakiet (%d B)\r\n", len);
     } else {
@@ -289,11 +294,17 @@ void Queue_Push(uint8_t* data, uint8_t len) {
     }
 }
 
-int Queue_Pop(uint8_t* buffer) {
+int Queue_Pop(uint8_t* buffer, uint8_t* out_tx_counter) {
     if(queueHead == queueTail) return 0;
 
     int len = txQueue[queueTail].len;
     memcpy(buffer, txQueue[queueTail].data, len);
+
+    // 2. Przypisujemy licznik do zmiennej wyjściowej
+    if(out_tx_counter != NULL) {
+        *out_tx_counter = txQueue[queueTail].tx_counter;
+    }
+
     queueTail = (queueTail + 1) % QUEUE_SIZE;
     return len;
 }
@@ -321,7 +332,7 @@ void SendTelemetry(void) {
     sprintf(packet, "\x3c\xff\x01%s>APRS,WIDE1-1:%s#%s BAT:%.2fV R_CNT:%u", APRS_CALLSIGN, APRS_COORDS, APRS_CALLSIGN, voltage, tx_reset_counter);
 
     DebugPrint("TELEMETRY: %s\r\n", packet + 3); // +3 żeby nie wyświetlać krzaków w logu
-    Queue_Push((uint8_t*)packet, strlen(packet)); // Wysyłamy całość (z krzakami)
+    Queue_Push((uint8_t*)packet, strlen(packet), 1); // Wysyłamy całość (z krzakami)
 }
 
 // Przerwanie EXTI (dla RX DIO0 - PB1)
@@ -466,9 +477,9 @@ int main(void)
 				}
 				DebugPrint("\r\n");
 			}
-			// ----------------------------------------
 
-			Queue_Push(rxBuffer, len);
+            // nowy pakiet w kolejce do wysłania
+			Queue_Push(rxBuffer, len, 1);
 		}
 
 		// Restart RX Continuous
@@ -494,10 +505,12 @@ int main(void)
     // 3. Obsługa nadawania
     if(queueHead != queueTail) {
 		uint8_t txBuffer[MAX_PKT_LEN];
-		int len = Queue_Pop(txBuffer);
+		uint8_t msg_tx_counter = 1;
+		int len = Queue_Pop(txBuffer, &msg_tx_counter);
 
 		if(len > 0) {
 			DebugPrint("TX: Preparing to send...\r\n");
+			DebugPrint("TX counter: %d\r\n", msg_tx_counter);
 
 			// --- NOWE: Podgląd treści ramki APRS w Debugu ---
 			// Sprawdzamy pin ręcznie, aby nie tracić czasu procesora na memcpy, gdy debug jest wyłączony
@@ -521,9 +534,13 @@ int main(void)
 			if (LoRa_Send(&loraTX, txBuffer, len)) {
 			    DebugPrint("TX: Success\r\n");
 			} else {
-			    DebugPrint("TX: FAILED! Re-queuing...\r\n");
-			    tx_reset_counter++;
-			    Queue_Push(txBuffer, len);
+				if (msg_tx_counter < 3) {
+					DebugPrint("TX: FAILED! Re-queuing...\r\n");
+					msg_tx_counter++;
+					Queue_Push(txBuffer, len, msg_tx_counter);
+				} else {
+					DebugPrint("TX: FAILED! %d time, forgetting...\r\n", msg_tx_counter);
+				}
 			}
 
 			// LED OFF (PC13 High)
