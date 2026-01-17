@@ -94,7 +94,9 @@ typedef struct {
 } LoRaPacket;
 
 uint16_t tx_reset_counter = 0;
-uint32_t lastRebootTick = 0; // Przechowuje czas ostatniego restartu/startu
+uint32_t lastRebootTick = 0; 	// Przechowuje czas ostatniego restartu/startu
+uint8_t reset_time = 6;     	// Co ilę godzin robić restart
+
 LoRaPacket txQueue[QUEUE_SIZE];
 uint8_t queueHead = 0;
 uint8_t queueTail = 0;
@@ -182,7 +184,7 @@ void LoRa_WriteReg(LoRa_Module* mod, uint8_t addr, uint8_t val) {
 }
 
 void LoRa_Init(LoRa_Module* mod) {
-    // 0. Upewnam się, że CS jest wysoki przed startem
+    // 0. Upewnij się, że CS jest wysoki przed startem
     HAL_GPIO_WritePin(mod->CS_Port, mod->CS_Pin, GPIO_PIN_SET);
 
     // 1. Reset sprzętowy (Hardware Reset)
@@ -215,8 +217,11 @@ void LoRa_Init(LoRa_Module* mod) {
         // LNA Gain: Max gain, Boost on (0x23 lub 0x20 | 0x03)
         LoRa_WriteReg(mod, REG_LNA, 0x23);
     } else { // Jeśli to nadajnik
-        // Max Power: PA_BOOST pin, 17dBm (0x8F) lub więcej przy PA_DAC
-        LoRa_WriteReg(mod, REG_PA_CONFIG, 0xFF);
+    	LoRa_WriteReg(mod, 0x0B, 0x2B); // OCP (Over Current Protection) ustawione na 100mA
+    	LoRa_WriteReg(mod, 0x4D, 0x84);	// 0x84 to tryb domyślny (do 17 dBm)
+    									// 0x87 to tryb High Power (20 dBm)
+    	// Max Power: PA_BOOST pin, 17dBm (0x8F) lub więcej przy PA_DAC 0xFF - pełna moc 100mW - 20dBm
+    	LoRa_WriteReg(mod, REG_PA_CONFIG, 0x8F);
     }
 
     // 6. Konfiguracja FIFO
@@ -311,7 +316,7 @@ void Queue_Push(uint8_t* data, uint8_t len, uint8_t tx_counter) {
         txQueue[queueHead].len = len;
         txQueue[queueHead].tx_counter = tx_counter;
         queueHead = nextHead;
-        DebugPrint("QUEUE: Dodano pakiet (%d B)\r\n", len);
+        DebugPrint("QUEUE: Package added (%d B)\r\n", len);
     } else {
         DebugPrint("QUEUE: FULL!\r\n");
     }
@@ -468,27 +473,25 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	  // 1 - KONIEC SEKCJI BEZPIECZEŃSTWA */
+	  // 1 - Testy wstępne
 
-	  // A. Planowy restart co 12 godzin - brak fizycznego dostępu
-	  if (HAL_GetTick() - lastRebootTick > (12 * 60 * 60 * 1000)) {
-	      DebugPrint("SYS: Scheduled 12h reboot...\r\n");
+	  // A. Planowy restart co 'reset_time' godzin (zapobiega nieoczekiwanym "dryfom" systemu)
+	  if ((reset_time != 0) && (HAL_GetTick() - lastRebootTick > (reset_time * 60 * 60 * 1000))) {
+	      DebugPrint("SYS: Scheduled %d hour reboot...\r\n", reset_time);
 	      HAL_Delay(100);
 	      NVIC_SystemReset();
 	  }
 
-
-	  // B. Sprawdzenie stanu modułów RX i TX (IsAlive)
+	  // B. Sprawdzenie stanu radiów (IsAlive)
 	  uint8_t rxLive = (LoRa_ReadReg(&loraRX, 0x42) == 0x12);
 	  uint8_t txLive = (LoRa_ReadReg(&loraTX, 0x42) == 0x12);
 
 	  if (rxLive && txLive) {
-	      // Jeśli oba radia odpowiadają przez SPI - (Watchdog 4s)
+	      // Jeśli oba radia odpowiadają przez SPI - karmimy psa (Watchdog 4s)
 	      HAL_IWDG_Refresh(&hiwdg);
 	  }
 	  else {
-	      // Coś zawisło! Ratuję przed twardym resetem IWDG.
-
+	      // Coś zawisło! Próbujemy ratować sytuację przed twardym resetem IWDG.
 	      if (!txLive) {
 	          tx_reset_counter++;
 	          HAL_RTCEx_BKUPWrite(&hrtc, RTC_BKP_DR1, tx_reset_counter);
@@ -660,7 +663,7 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
                               |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_HSI;
-  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV4;
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
